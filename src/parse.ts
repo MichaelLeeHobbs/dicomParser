@@ -41,11 +41,13 @@ export interface ParseOptions {
     readonly stopAt?: StopAtOption;
     /** Maximum sequence nesting depth (default 128). */
     readonly maxDepth?: number;
+    /** Maximum total structures (elements + items + fragments); default 1,000,000. */
+    readonly maxElements?: number;
     /** Injected raw-deflate inflater for the deflated transfer syntax. */
     readonly inflate?: InflateFn;
     /** Charset handling for string decoding (#146): assume/fallback names. */
     readonly charset?: CharsetOptions;
-    /** Maximum inflated size in bytes for deflated files (default 1 GiB). */
+    /** Maximum inflated size in bytes for deflated files (default 256 MiB). */
     readonly maxInflatedBytes?: number;
 }
 
@@ -119,7 +121,15 @@ function planParse(bytes: Uint8Array, options: ParseOptions): Plan {
 
 /** Splices preamble+meta bytes together with the inflated dataset bytes. */
 function spliceInflated(bytes: Uint8Array, dataSetPosition: number, inflated: Uint8Array): Uint8Array {
-    const full = new Uint8Array(dataSetPosition + inflated.length);
+    const total = dataSetPosition + inflated.length;
+    let full: Uint8Array;
+    try {
+        full = new Uint8Array(total);
+    } catch (cause) {
+        // an oversized caller-supplied maxInflatedBytes can push this past the
+        // maximum typed-array length; surface it as a typed error, not a RangeError
+        throw new DicomError('malformed', `deflated transfer syntax: inflated dataset (${total} bytes) is too large to materialize`, { cause });
+    }
     full.set(bytes.subarray(0, dataSetPosition), 0);
     full.set(inflated, dataSetPosition);
     return full;
@@ -178,6 +188,7 @@ function parseDataSet(plan: Plan, bytes: Uint8Array, options: ParseOptions): Par
         ...(options.vrLookup === undefined ? {} : { vrLookup: options.vrLookup }),
         ...(options.stopAt === undefined ? {} : { stopAt: options.stopAt }),
         ...(options.maxDepth === undefined ? {} : { maxDepth: options.maxDepth }),
+        ...(options.maxElements === undefined ? {} : { maxElements: options.maxElements }),
     });
     const dataSet = new DicomDataSet(bytes, plan.littleEndian, result.elements);
     assignCharsets(dataSet, options, warnings);

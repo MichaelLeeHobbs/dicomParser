@@ -24,7 +24,9 @@ export type DicomErrorCode =
     /** A deflated transfer syntax was found but no inflate strategy is available. */
     | 'no-inflater'
     /** Sequence nesting exceeded the configured depth bound. */
-    | 'depth-exceeded';
+    | 'depth-exceeded'
+    /** The parse exceeded a configured resource bound (e.g. total element count). */
+    | 'limit-exceeded';
 
 /**
  * The error type thrown by all parser internals.
