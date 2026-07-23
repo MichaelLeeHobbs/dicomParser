@@ -79,6 +79,7 @@ export {
     writeFile,
     type DataSetEdits,
     type DeflateFn,
+    type SerializeParsedOptions,
     type WriteFileOptions,
 } from './writeFile';
 export {
