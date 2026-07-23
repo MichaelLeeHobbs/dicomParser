@@ -1,0 +1,13 @@
+{
+    "$schema": "https://typedoc.org/schema.json",
+    "entryPoints": ["src/index.ts", "src/compat.ts"],
+    "out": "docs-site",
+    "name": "@ubercode/dicom-parser",
+    "includeVersion": true,
+    "excludePrivate": true,
+    "excludeInternal": true,
+    "readme": "README.md",
+    "navigationLinks": {
+        "GitHub": "https://github.com/MichaelLeeHobbs/dicomParser"
+    }
+}

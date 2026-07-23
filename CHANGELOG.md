@@ -1,0 +1,60 @@
+# Changelog
+
+All notable changes to this project are documented here, following
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The legacy 1.x history is
+preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
+
+## [Unreleased]
+
+## [2.0.0-rc.1] — unreleased
+
+The ground-up TypeScript rewrite. Highlights over `dicom-parser` 1.8.21:
+
+### Added
+
+- **DICOM writing** (upstream #214's top ask): `writeFile`, `encodeDataSet`,
+  `serializeParsed` (byte-identical round trips for conformant LE files),
+  `modifyDataSet` edit model, generated file meta group with correct group length,
+  deflated output.
+- **Discriminated-union element model** (`kind: 'value' | 'sequence' | 'encapsulated' |
+'unknown'`) with exact byte accounting (`startOffset`/`dataOffset`/`endOffset`) — #257/#278.
+- **Typed errors with partial results**: `parse()` returns a `ParseResult`; failures carry
+  a `DicomError` plus everything parsed before the failure — #46/#203/#277.
+- **SV/UV/OV support** with BigInt accessors — fixes the #280/#281 parse derailment.
+- **Charset-aware strings**: SpecificCharacterSet incl. ISO 2022 CJK escape walking,
+  decode-then-split, `charset: { assume, fallback }` options — #146.
+- **CP-246**: `UN` + undefined length as implicit SQ; `UN` + defined length via
+  `vrLookup` returning `'SQ'`, with safe binary fallback — #141/#114/#245.
+- **TS-driven encapsulation detection** for defined-length pixel data — #59/#60.
+- **`stopAt` with ≥ semantics** and `inclusive` control — #104/#268/#52.
+- **Headerless dataset parsing** via `transferSyntax` — #48.
+- **Modern inflate strategy**: `node:zlib` / `DecompressionStream('deflate-raw')` /
+  injected inflater; deflate-bomb cap (`maxInflatedBytes`) — #270/#125/#109.
+- **Pixel-data helpers**: `readEncapsulatedImageFrame`,
+  `readEncapsulatedPixelDataFromFragments`, `createJpegBasicOffsetTable`,
+  `nativePixelDataView` — #73/#264 ergonomics.
+- **v1 compat façade** (`@ubercode/dicom-parser/compat`): the upstream API surface,
+  validated tag-for-tag against `dicom-parser@1.8.21` across a 199-file corpus.
+- **Fuzz suite** (fast-check): arbitrary bytes, corpus mutation, hostile deflate,
+  random element streams — #282 posture; ESM+CJS dual build, Node test suite — #270/#252.
+
+### Fixed (relative to 1.8.21)
+
+- Delimitation items no longer surface as dataset elements — #244/#143.
+- Non-zero delimitation-item lengths are tolerated (warning) instead of crashing — #266.
+- Misdetected implicit sequences fall back to opaque values instead of derailing the
+  file — #114.
+- `string()` no longer truncates at embedded NUL bytes — #146.
+- Indexed `attributeTag` for multi-valued AT — #253.
+- Indexed accessor reads are bounds-checked against the element length.
+
+### Changed
+
+- Version lineage continues as 2.x; the 1.x API lives under `/compat`.
+- Explicit big endian is read-only (retired by DICOM); the write path is little-endian.
+
+## [2.0.0-alpha.0] — 2026-07-22
+
+- Phase 0 scaffold: toolchain (TypeScript 7, tsdown, Vitest, ESLint 10), CI
+  (Node 20/22/24), publish workflow (OIDC trusted publishing), SECURITY.md with private
+  vulnerability reporting. No public API yet.
