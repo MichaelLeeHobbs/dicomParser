@@ -1,6 +1,6 @@
 {
     "name": "@ubercode/dicom-parser",
-    "version": "2.0.0-alpha.0",
+    "version": "2.0.0-rc.1",
     "description": "TypeScript remake of dicomParser: parse and write DICOM Part-10, zero runtime dependencies. Fork of cornerstonejs/dicomParser.",
     "type": "module",
     "packageManager": "pnpm@10.33.4",
