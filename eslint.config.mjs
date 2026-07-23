@@ -36,6 +36,6 @@ export default tseslint.config(
         },
     },
     {
-        ignores: ['dist/**', 'coverage/**', 'node_modules/**', 'legacy/**', 'legacy-test/**', '*.config.*', 'eslint.config.mjs'],
+        ignores: ['dist/**', 'coverage/**', 'docs-site/**', 'examples/**', 'node_modules/**', 'legacy/**', 'legacy-test/**', '*.config.*', 'eslint.config.mjs'],
     }
 );
