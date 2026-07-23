@@ -248,17 +248,31 @@ function compareDataSets(rootLegacy: LegacyDataSet, rootFork: CompatDataSet, fil
 function compareFile(bytes: Uint8Array, fileName: string): void {
     let legacy: LegacyDataSet;
     try {
-        legacy = (legacyParser as unknown as { parseDicom(b: Uint8Array): LegacyDataSet }).parseDicom(bytes);
+        // Hand legacy a Buffer, not a bare Uint8Array: 1.8.21's deflate path uses
+        // `byteArray.copy`, which only exists on Buffer — so a Uint8Array makes it
+        // throw on every `_dfl` file and fall through to the smoke branch, hiding
+        // deflated regressions. With a Buffer, legacy inflates and the full
+        // tag-for-tag comparison runs (verified: image_dfl=40 elements, etc.).
+        legacy = (legacyParser as unknown as { parseDicom(b: Uint8Array): LegacyDataSet }).parseDicom(Buffer.from(bytes));
     } catch {
-        // Legacy threw (e.g. UV derailment #281, or a deflated `_dfl` file that
-        // trips 1.8.21 under vitest's ESM interop). This catch branch degrades
-        // to a fork-only smoke check: the fork must still parse something.
+        // Legacy genuinely could not parse (e.g. UV derailment #281). Degrade to a
+        // fork-only smoke check: the fork must still parse something.
         const fork = parseDicom(bytes);
         expect(Object.keys(fork.elements).length, `fork parsed ${fileName}`).toBeGreaterThan(0);
         return;
     }
-    // Deep-comparison branch: legacy parsed, so the fork is held tag-for-tag.
     const fork: CompatDataSet = parseDicom(bytes);
+    // On a deflated file, 1.8.21 restarts the inflated ByteStream at position 0
+    // and re-parses the preamble/DICM/meta as junk dataset elements (its DICM
+    // misread `x49444d43` is the tell) — divergence A3, fork-is-right. That
+    // pollutes legacy's keyset and offsets, so a tag-for-tag deep compare would
+    // fight legacy's own bug; hold the fork to legacy at the VALUE-accessor level
+    // instead (still real differential coverage of the inflated dataset).
+    if (legacy.elements['x49444d43'] !== undefined) {
+        compareAccessors(legacy, fork, fileName);
+        return;
+    }
+    // Deep-comparison branch: legacy parsed cleanly, so the fork is held tag-for-tag.
     compareDataSets(legacy, fork, fileName);
 }
 
