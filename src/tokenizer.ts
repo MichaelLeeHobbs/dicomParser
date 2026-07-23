@@ -61,6 +61,13 @@ export interface ReadElementsOptions {
     /** Maximum sequence nesting depth (default 128). */
     readonly maxDepth?: number;
     /**
+     * Maximum total structures (elements + items + fragments) across the whole
+     * parse (default 1,000,000). Bounds memory against amplification bombs — a
+     * small input can otherwise allocate a full dataset + Map per empty item
+     * (~50× heap). Exceeding it is a `limit-exceeded` error with partial results.
+     */
+    readonly maxElements?: number;
+    /**
      * `true` when the dataset's transfer syntax is a compressed one, enabling
      * encapsulation detection for defined-length pixel data (upstream #59/#60):
      * a defined-length (7FE0,0010) whose value starts with an item tag is
@@ -108,6 +115,7 @@ interface SequenceFrame {
 type Frame = DataSetFrame | SequenceFrame;
 
 const DEFAULT_MAX_DEPTH = 128;
+const DEFAULT_MAX_ELEMENTS = 1_000_000;
 
 class Tokenizer {
     private readonly stream: ByteStream;
@@ -115,11 +123,14 @@ class Tokenizer {
     private readonly stopTag: Tag | undefined;
     private readonly stopInclusive: boolean;
     private readonly maxDepth: number;
+    private readonly maxElements: number;
     private readonly compressedTransferSyntax: boolean;
     private readonly stack: Frame[] = [];
     private elements = new Map<Tag, DicomElement>();
     private stoppedAt: Tag | undefined;
     private stopPending = false;
+    private structureCount = 0;
+    private salvaging = false;
 
     constructor(stream: ByteStream, options: ReadElementsOptions) {
         this.stream = stream;
@@ -127,6 +138,7 @@ class Tokenizer {
         this.stopTag = options.stopAt === undefined ? undefined : toTag(options.stopAt.tag);
         this.stopInclusive = options.stopAt?.inclusive ?? true;
         this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
+        this.maxElements = options.maxElements ?? DEFAULT_MAX_ELEMENTS;
         this.compressedTransferSyntax = options.compressedTransferSyntax ?? false;
         this.stack.push({
             kind: 'dataset',
@@ -170,6 +182,11 @@ class Tokenizer {
      * parsing resumes after it. Returns `false` when no fallback exists.
      */
     private recoverToFallback(cause: DicomError): boolean {
+        // Resource bounds are terminal — rolling back and retrying would just
+        // re-hit the limit (the count never decreases) or overflow the stack.
+        if (cause.code === 'limit-exceeded' || cause.code === 'depth-exceeded') {
+            return false;
+        }
         let fallbackIndex = -1;
         for (let i = this.stack.length - 1; i >= 0; i--) {
             const frame = this.stack[i] as Frame;
@@ -205,6 +222,7 @@ class Tokenizer {
 
     /** Unwinds open frames after a failure so partial results survive. */
     private salvage(): void {
+        this.salvaging = true;
         while (this.stack.length > 0) {
             const top = this.stack[this.stack.length - 1] as Frame;
             if (top.kind === 'dataset') {
@@ -506,6 +524,7 @@ class Tokenizer {
 
     private pushItem(frame: SequenceFrame): void {
         this.checkDepth();
+        this.bumpStructures(1);
         const itemStart = this.stream.position;
         const itemTag = this.stream.readTag();
         if (itemTag !== TAG_ITEM) {
@@ -584,7 +603,18 @@ class Tokenizer {
     }
 
     private addElement(frame: DataSetFrame, element: DicomElement): void {
+        this.bumpStructures(element.kind === 'encapsulated' ? 1 + element.fragments.length : 1);
         frame.elements.set(element.tag, element);
+    }
+
+    /** Bounds total structures (elements + items + fragments) against amplification bombs. */
+    private bumpStructures(count: number): void {
+        this.structureCount += count;
+        // Salvage re-attaches already-parsed partial frames; it must not re-trip
+        // the limit and throw out of the (uncaught) unwind path.
+        if (!this.salvaging && this.structureCount > this.maxElements) {
+            throw new DicomError('limit-exceeded', `parse exceeded maxElements (${this.maxElements}) total structures`, { offset: this.stream.position });
+        }
     }
 
     /** Consumes an 8-byte delimitation item; its length is ignored (#266). */

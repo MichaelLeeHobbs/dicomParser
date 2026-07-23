@@ -30,7 +30,7 @@ export interface InflateOptions {
 }
 
 /** Default inflated-size cap: 1 GiB. */
-export const DEFAULT_MAX_INFLATED_BYTES = 1024 * 1024 * 1024;
+export const DEFAULT_MAX_INFLATED_BYTES = 256 * 1024 * 1024;
 
 interface ZlibLike {
     inflateRawSync(data: Uint8Array, options?: { maxOutputLength?: number }): Uint8Array;

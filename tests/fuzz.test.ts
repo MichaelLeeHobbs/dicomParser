@@ -4,6 +4,7 @@ import { deflateRawSync } from 'node:zlib';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from '../src/parse';
+import { DEFAULT_MAX_INFLATED_BYTES } from '../src/inflate';
 import { TS, concat, encapsulatedPixelData, explicitEl, implicitEl, latin1, metaGroup, p10, p10Deflated, sqExplicit, sqExplicitUndefined } from './helpers/p10';
 
 // Fuzz posture (PLAN.md backlog item 12, upstream #282): the parser must never
@@ -155,5 +156,48 @@ describe('fuzz: random element streams', () => {
             }),
             { numRuns: 250 }
         );
+    });
+});
+
+describe('resource limits (adversarial review S1/S2/S3)', () => {
+    const u32 = (n: number): number[] => [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255];
+
+    function emptyItemBomb(count: number): Uint8Array {
+        const parts: number[] = [0x09, 0x00, 0x01, 0x00, ...u32(0xffffffff)];
+        for (let i = 0; i < count; i++) {
+            parts.push(0xfe, 0xff, 0x00, 0xe0, 0, 0, 0, 0);
+        }
+        parts.push(0xfe, 0xff, 0xdd, 0xe0, 0, 0, 0, 0);
+        return Uint8Array.from(parts);
+    }
+
+    it('caps structural amplification with a typed error and partial results, never OOM', () => {
+        const result = parse(emptyItemBomb(200_000), { transferSyntax: '1.2.840.10008.1.2', maxElements: 1000 });
+        expect(result.ok).toBe(false);
+        expect(result.error?.code).toBe('limit-exceeded');
+        // partial results survive the limit
+        expect(result.dataSet).toBeDefined();
+    });
+
+    it('salvage after a limit hit does not re-throw (invariant: parse never throws)', () => {
+        // a bomb inside a sequence that is itself on the stack when the limit trips
+        expect(() => parse(emptyItemBomb(50_000), { transferSyntax: '1.2.840.10008.1.2', maxElements: 100 })).not.toThrow();
+    });
+
+    it('a modest real-shaped file parses well under the default cap', () => {
+        const result = parse(emptyItemBomb(1000), { transferSyntax: '1.2.840.10008.1.2' });
+        expect(result.ok).toBe(true);
+    });
+
+    it('the default inflated-size cap is a sane 256 MiB, not a multi-GB peak', () => {
+        expect(DEFAULT_MAX_INFLATED_BYTES).toBe(256 * 1024 * 1024);
+    });
+
+    it('a deflated file parses under a large but valid cap (the splice guard is a latent-overflow backstop)', () => {
+        // the S3 guard only fires on an actual >2 GiB allocation, which we cannot
+        // materialize in a test; assert the happy path with a large valid cap
+        const small = p10Deflated([explicitEl('00080060', 'CS', latin1('CT'))]);
+        const result = parse(small, { maxInflatedBytes: 512 * 1024 * 1024 });
+        expect(result.ok).toBe(true);
     });
 });
