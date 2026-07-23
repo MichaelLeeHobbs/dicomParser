@@ -42,7 +42,7 @@
         "dry-run": "npm pack --dry-run",
         "prepublishOnly": "pnpm run clean && pnpm run lint && pnpm run typecheck && pnpm run test:coverage && pnpm run build",
         "docs": "typedoc",
-        "bench": "vitest run tests/benchmark.test.ts"
+        "bench": "cross-env BENCH=1 vitest run tests/benchmark.test.ts"
     },
     "keywords": [
         "dicom",
@@ -74,6 +74,7 @@
         "@eslint/js": "^10.0.1",
         "@types/node": "^26.1.1",
         "@vitest/coverage-v8": "^4.1.10",
+        "cross-env": "^10.1.0",
         "dicom-parser": "1.8.21",
         "eslint": "^10.7.0",
         "eslint-config-prettier": "^10.1.8",
