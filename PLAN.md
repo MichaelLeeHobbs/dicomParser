@@ -190,7 +190,7 @@ off here as they land.
 - [x] README: badges (npm version/downloads, CI, license), install, quick-start for parse AND
       write, API overview, migration-from-`dicom-parser` guide (or link), charset support table,
       lenient-mode options, codec handoff recipe (fragments → external decoder)
-- [x] Generated API docs (TypeDoc): site builds (`pnpm run docs`) + Pages workflow added — enable GitHub Pages (Actions source) in repo settings for publishing; TSDoc on every public symbol
+- [x] Generated API docs (TypeDoc) published via GitHub Pages (enabled, Actions source: https://michaelleehobbs.github.io/dicomParser/); TSDoc on every public symbol
 - [x] `docs/migration-v1.md` — v1 → v2 mapping incl. compat-façade usage and divergence list
 - [x] Examples: Node parse, Node write/round-trip, browser parse (bundler), deflated TS,
       metadata-only fast path (`stopAt`)
@@ -215,9 +215,9 @@ off here as they land.
 **Repo hygiene**
 
 - [ ] `legacy/` and `legacy-test/` deleted (port complete); testImages/ retained
-- [ ] CONTRIBUTING.md (dev setup, gates, fixture-adding guide, security-sensitive areas)
-- [ ] Issue templates (bug w/ sample-file guidance, feature); PR template with gate checklist
-- [ ] Branch protection on master (CI required)
+- [x] CONTRIBUTING.md (dev setup, gates, fixture-adding guide, security-sensitive areas)
+- [x] Issue templates (bug w/ sample-file guidance, feature); PR template with gate checklist
+- [x] Branch protection on master (CI required — all five checks)
 
 **Ecosystem**
 
