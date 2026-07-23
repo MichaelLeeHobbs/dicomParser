@@ -113,5 +113,7 @@ export const TAG_SEQUENCE_DELIMITATION: Tag = 0xfffee0dd;
 export const TAG_PIXEL_DATA: Tag = 0x7fe00010;
 /** Transfer Syntax UID tag (0002,0010). */
 export const TAG_TRANSFER_SYNTAX_UID: Tag = 0x00020010;
+/** Specific Character Set tag (0008,0005). */
+export const TAG_SPECIFIC_CHARACTER_SET: Tag = 0x00080005;
 /** Undefined-length sentinel (0xFFFFFFFF). */
 export const UNDEFINED_LENGTH = 0xffffffff;

@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
-import type { EncapsulatedElement } from './element';
+import type { EncapsulatedElement, SequenceElement } from './element';
 import { inflateRaw, inflateRawAsync } from './inflate';
 import { TS_DEFLATED_LE, TS_EXPLICIT_BE, TS_EXPLICIT_LE, TS_GE_PRIVATE_DLX, TS_IMPLICIT_LE, parse, parseAsync } from './parse';
 import { readUiString } from './part10';
 import { tagFromString } from './tag';
-import { TS, concat, encapsulatedPixelData, explicitEl, implicitEl, latin1, p10, p10Deflated } from '../tests/helpers/p10';
+import { TS, concat, encapsulatedPixelData, explicitEl, implicitEl, latin1, p10, p10Deflated, sqExplicit } from '../tests/helpers/p10';
 import type { ParseResult } from './parse';
 
 // Ported from legacy parseDicom_test.js (big endian, explicit little endian,
@@ -235,5 +235,76 @@ describe('parse — structure and options', () => {
 
     it('rejects non-Uint8Array input', () => {
         expect(() => parse(undefined as unknown as Uint8Array)).toThrow(/Uint8Array/);
+    });
+});
+
+describe('parse — charset-aware string decoding (#146)', () => {
+    function fileWithCharset(charset: string, patientNameBytes: readonly number[]): Uint8Array {
+        const charsetEl = explicitEl('00080005', 'CS', evenPadLocal(charset));
+        const pnEl = explicitEl('00100010', 'PN', Uint8Array.from(patientNameBytes.length % 2 === 0 ? patientNameBytes : [...patientNameBytes, 0x20]));
+        return p10(TS.explicitLE, [charsetEl, pnEl]);
+    }
+
+    function evenPadLocal(value: string): Uint8Array {
+        const padded = value.length % 2 === 0 ? value : `${value} `;
+        return latin1(padded);
+    }
+
+    it('decodes Latin-1 names under ISO_IR 100', () => {
+        const result = parse(fileWithCharset('ISO_IR 100', Array.from(latin1('M\xfcller^J\xf6rg'))));
+        expect(result.error).toBeUndefined();
+        expect(result.dataSet.string('x00100010')).toBe('Müller^Jörg');
+        expect(result.dataSet.charset?.terms).toEqual(['ISO_IR 100']);
+    });
+
+    it('decodes UTF-8 names under ISO_IR 192', () => {
+        const result = parse(fileWithCharset('ISO_IR 192', Array.from(new TextEncoder().encode('Wang^XiaoDong=王^小东'))));
+        expect(result.dataSet.string('x00100010')).toBe('Wang^XiaoDong=王^小东');
+    });
+
+    it('decode-then-split: multi-byte values containing 0x5C decode correctly per component', () => {
+        // GB18030 王 = 0xCD 0xF5; craft a two-valued LO with a multi-byte char per value
+        const value = [0xcd, 0xf5, 0x5c, 0xcd, 0xf5];
+        const charsetEl = explicitEl('00080005', 'CS', latin1('GB18030 '));
+        const loEl = explicitEl('00081030', 'LO', Uint8Array.from([...value, 0x20]));
+        const result = parse(p10(TS.explicitLE, [charsetEl, loEl]));
+        expect(result.dataSet.string('x00081030', 0)).toBe('王');
+        expect(result.dataSet.string('x00081030', 1)).toBe('王');
+        expect(result.dataSet.numStringValues('x00081030')).toBe(2);
+    });
+
+    it('warns and decodes as Latin-1 for an unsupported charset', () => {
+        const result = parse(fileWithCharset('ISO_IR 999', Array.from(latin1('M\xfcller'))));
+        expect(result.error).toBeUndefined();
+        expect(result.warnings.some(w => w.code === 'unsupported-charset')).toBe(true);
+        expect(result.dataSet.string('x00100010')).toBe('Müller');
+    });
+
+    it('honors the charset fallback option', () => {
+        const result = parse(fileWithCharset('ISO_IR 999', Array.from(latin1('\xbb\xee\xda'))), { charset: { fallback: 'cyrillic' } });
+        expect(result.warnings.some(w => w.code === 'unsupported-charset')).toBe(false);
+        expect(result.dataSet.string('x00100010')).toBe('Люк');
+    });
+
+    it('honors the charset assume option for files without (0008,0005)', () => {
+        const pnEl = explicitEl('00100010', 'PN', latin1('M\xfcller^J\xf6rg '));
+        const result = parse(p10(TS.explicitLE, [pnEl]), { charset: { assume: 'latin-1' } });
+        expect(result.dataSet.charset?.terms).toEqual(['ISO_IR 100']);
+        expect(result.dataSet.string('x00100010')).toBe('Müller^Jörg');
+    });
+
+    it('sequence items inherit the parent charset and can override it', () => {
+        const charsetEl = explicitEl('00080005', 'CS', latin1('ISO_IR 100'));
+        const inheritItem = concat([explicitEl('00100010', 'PN', latin1('M\xfcller '))]);
+        const overrideItem = concat([explicitEl('00080005', 'CS', latin1('ISO_IR 144')), explicitEl('00100010', 'PN', latin1('\xbb\xee\xda '))]);
+        const sqEl = sqExplicit('00081140', [inheritItem, overrideItem]);
+        const result = parse(p10(TS.explicitLE, [charsetEl, sqEl]));
+        expect(result.error).toBeUndefined();
+        const element = result.dataSet.element('x00081140');
+        expect(element?.kind).toBe('sequence');
+        const items = (element as SequenceElement).items;
+        expect(items[0]?.dataSet.string('x00100010')).toBe('Müller');
+        expect(items[1]?.dataSet.string('x00100010')).toBe('Люк');
+        expect(items[1]?.dataSet.charset?.terms).toEqual(['ISO_IR 144']);
     });
 });

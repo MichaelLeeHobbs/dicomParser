@@ -198,10 +198,14 @@ describe('readElements — implicit', () => {
         expect(result.elements.get(tagFromString('x00080100'))).toBeDefined();
     });
 
-    it('misdetects pixel-data bytes as a sequence without a lookup and reports a typed error (legacy threw)', () => {
+    it('recovers peek-misdetected pixel data to an opaque value (speculative fallback; legacy threw and lost the file)', () => {
         const stream = streamOf([0xe0, 0x7f, 0x10, 0x00, 0x08, 0x00, 0x00, 0x00, 0xfe, 0xff, 0x00, 0xe0, 0x0a, 0x00, 0x00, 0x00]);
         const result = readElements(stream, { explicitVr: false });
-        expect(result.error?.code).toBe('malformed');
+        expect(result.error).toBeUndefined();
+        const element = result.elements.get(tagFromString('x7fe00010')) as ValueElement;
+        expect(element.kind).toBe('value');
+        expect(element.length).toBe(8);
+        expect(stream.warnings.some(w => w.code === 'sequence-fallback')).toBe(true);
     });
 
     it('the VR lookup overrides peeking (item-tag-like pixel data)', () => {
@@ -223,10 +227,14 @@ describe('readElements — implicit', () => {
         expect(element.length).toBe(11);
     });
 
-    it('without a lookup, delimiter-tag-like pixel data reports a typed error (legacy threw)', () => {
+    it('recovers delimiter-tag-like pixel data to an opaque value without a lookup (legacy threw and lost the file)', () => {
         const stream = streamOf([0xe0, 0x7f, 0x10, 0x00, 0x0b, 0x00, 0x00, 0x00, 0xfe, 0xff, 0xdd, 0xe0, 0x0a, 0x00, 0x00, 0x00, 0x12, 0x43, 0x98]);
         const result = readElements(stream, { explicitVr: false });
-        expect(result.error?.code).toBe('malformed');
+        expect(result.error).toBeUndefined();
+        const element = result.elements.get(tagFromString('x7fe00010')) as ValueElement;
+        expect(element.kind).toBe('value');
+        expect(element.length).toBe(11);
+        expect(stream.warnings.some(w => w.code === 'sequence-fallback')).toBe(true);
     });
 
     it('keeps a private defined-length element opaque even when it looks like a sequence (#114)', () => {
@@ -441,14 +449,20 @@ describe('readElements — length pathologies', () => {
         expect(result.elements.size).toBe(1);
     });
 
-    it('reports a typed error when a value overruns its enclosing item bound', () => {
-        // item declares 10 bytes; the element inside claims 0x20
+    it('rolls a defined-length SQ back to an opaque value when an inner value overruns the item bound', () => {
+        // item declares 10 bytes; the element inside claims 0x20 — the
+        // speculative frame falls back and the following element still parses
         const stream = streamOf([
             0x11, 0x22, 0x33, 0x44, 0x53, 0x51, 0x00, 0x00, 0x12, 0x00, 0x00, 0x00, 0xfe, 0xff, 0x00, 0xe0, 0x0a, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x01,
-            0x53, 0x48, 0x20, 0x00, 0x41, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x53, 0x48, 0x20, 0x00, 0x41, 0x20, 0x08, 0x00, 0x00, 0x01, 0x53, 0x48, 0x02, 0x00, 0x41, 0x20,
         ]);
         const result = readElements(stream);
-        expect(result.error?.code).toBe('malformed');
+        expect(result.error).toBeUndefined();
+        const element = result.elements.get(tagFromString('x22114433')) as ValueElement;
+        expect(element.kind).toBe('value');
+        expect(element.length).toBe(0x12);
+        expect(stream.warnings.some(w => w.code === 'sequence-fallback')).toBe(true);
+        expect(result.elements.get(tagFromString('x00080100'))?.length).toBe(2);
     });
 });
 
@@ -505,5 +519,99 @@ describe('readElements — depth bound', () => {
         expect(result.error?.code).toBe('depth-exceeded');
         // partial results survive: the outermost sequence is present
         expect(result.elements.size).toBe(1);
+    });
+});
+
+describe('readElements — CP-246 defined-length UN sequences (#141)', () => {
+    const SQ_LOOKUP = (tag: number): string | undefined => (tag === 0x00081140 ? 'SQ' : undefined);
+
+    // (0008,1140) UN, defined length 18, containing one defined-length item
+    // with one implicit element (0008,0100) 'A '
+    const UN_SQ = [
+        0x08, 0x00, 0x40, 0x11, 0x55, 0x4e, 0x00, 0x00, 0x12, 0x00, 0x00, 0x00, 0xfe, 0xff, 0x00, 0xe0, 0x0a, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x01, 0x02,
+        0x00, 0x00, 0x00, 0x41, 0x20,
+    ];
+
+    it('parses UN + defined length as an implicit sequence when the lookup says SQ', () => {
+        const stream = streamOf(UN_SQ);
+        const result = readElements(stream, { explicitVr: true, vrLookup: SQ_LOOKUP });
+        expect(result.error).toBeUndefined();
+        const element = sq(result.elements.get(tagFromString('x00081140')));
+        expect(element.vr).toBe('UN');
+        expect(element.items).toHaveLength(1);
+        expect(element.items[0]?.dataSet.element('x00080100')?.length).toBe(2);
+    });
+
+    it('keeps UN + defined length opaque without a lookup match (legacy behavior)', () => {
+        const stream = streamOf(UN_SQ);
+        const result = readElements(stream, { explicitVr: true });
+        expect(result.error).toBeUndefined();
+        const element = result.elements.get(tagFromString('x00081140')) as ValueElement;
+        expect(element.kind).toBe('value');
+        expect(element.length).toBe(0x12);
+    });
+
+    it('falls back to an opaque value when the UN content is not a sequence', () => {
+        // lookup says SQ but the value bytes are garbage
+        const bytes = [
+            0x08, 0x00, 0x40, 0x11, 0x55, 0x4e, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a,
+            // following element still parses
+            0x08, 0x00, 0x00, 0x01, 0x53, 0x48, 0x02, 0x00, 0x41, 0x20,
+        ];
+        const stream = streamOf(bytes);
+        const result = readElements(stream, { explicitVr: true, vrLookup: SQ_LOOKUP });
+        expect(result.error).toBeUndefined();
+        const element = result.elements.get(tagFromString('x00081140')) as ValueElement;
+        expect(element.kind).toBe('value');
+        expect(element.length).toBe(10);
+        expect(stream.warnings.some(w => w.code === 'sequence-fallback')).toBe(true);
+        expect(result.elements.get(tagFromString('x00080100'))?.length).toBe(2);
+    });
+});
+
+describe('readElements — defined-length encapsulated pixel data (#59/#60)', () => {
+    // (7FE0,0010) OB defined length 20: empty BOT item + one 4-byte fragment
+    const DEFINED_ENCAPSULATED = [
+        0xe0, 0x7f, 0x10, 0x00, 0x4f, 0x42, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0xfe, 0xff, 0x00, 0xe0, 0x00, 0x00, 0x00, 0x00, 0xfe, 0xff, 0x00, 0xe0, 0x04,
+        0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04,
+    ];
+
+    it('scans defined-length pixel data as encapsulated in a compressed transfer syntax', () => {
+        const stream = streamOf(DEFINED_ENCAPSULATED);
+        const result = readElements(stream, { explicitVr: true, compressedTransferSyntax: true });
+        expect(result.error).toBeUndefined();
+        const element = result.elements.get(tagFromString('x7fe00010')) as EncapsulatedElement;
+        expect(element.kind).toBe('encapsulated');
+        expect(element.hadUndefinedLength).toBe(false);
+        expect(element.fragments).toHaveLength(1);
+        expect(element.fragments[0]).toEqual({ offset: 0, position: 28, length: 4 });
+        expect(element.endOffset).toBe(32);
+    });
+
+    it('keeps defined-length pixel data opaque in an uncompressed transfer syntax', () => {
+        const stream = streamOf(DEFINED_ENCAPSULATED);
+        const result = readElements(stream, { explicitVr: true });
+        expect(result.error).toBeUndefined();
+        expect(result.elements.get(tagFromString('x7fe00010'))?.kind).toBe('value');
+    });
+
+    it('keeps native-looking pixel data opaque even in a compressed transfer syntax', () => {
+        // value does not start with an item tag
+        const bytes = [0xe0, 0x7f, 0x10, 0x00, 0x4f, 0x42, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04];
+        const result = readElements(streamOf(bytes), { explicitVr: true, compressedTransferSyntax: true });
+        expect(result.elements.get(tagFromString('x7fe00010'))?.kind).toBe('value');
+    });
+
+    it('falls back to an opaque value when the bounded scan fails', () => {
+        // starts with an item tag whose fragment has undefined length
+        const bytes = [
+            0xe0, 0x7f, 0x10, 0x00, 0x4f, 0x42, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0xfe, 0xff, 0x00, 0xe0, 0x00, 0x00, 0x00, 0x00, 0xfe, 0xff, 0x00, 0xe0,
+            0xff, 0xff, 0xff, 0xff,
+        ];
+        const stream = streamOf(bytes);
+        const result = readElements(stream, { explicitVr: true, compressedTransferSyntax: true });
+        expect(result.error).toBeUndefined();
+        expect(result.elements.get(tagFromString('x7fe00010'))?.kind).toBe('value');
+        expect(stream.warnings.some(w => w.code === 'sequence-fallback')).toBe(true);
     });
 });

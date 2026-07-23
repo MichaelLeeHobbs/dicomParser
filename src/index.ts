@@ -49,3 +49,15 @@ export {
     type ParseResult,
 } from './parse';
 export { parseDA, parsePN, parseTM, type DicomDate, type DicomTime, type PersonName } from './valueParsers';
+export {
+    DEFAULT_CHARSET_CONTEXT,
+    LATIN1_CHARSET_CONTEXT,
+    decodeDicomText,
+    decodeLatin1,
+    decodeUtf8,
+    isProbableUtf8Mislabel,
+    normalizeCharsetName,
+    resolveCharsetContext,
+    type CharsetContext,
+    type CharsetOptions,
+} from './charset';

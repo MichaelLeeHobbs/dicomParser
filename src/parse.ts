@@ -10,13 +10,15 @@
  */
 
 import { ByteStream } from './byteStream';
+import { LATIN1_CHARSET_CONTEXT, resolveCharsetContext, type CharsetContext, type CharsetOptions } from './charset';
 import { DicomDataSet } from './dataSet';
 import { DicomError, type ParseWarning } from './errors';
 import { inflateRaw, inflateRawAsync, type InflateFn } from './inflate';
 import { readPart10Header, type Part10Header } from './part10';
 import { readElements, type StopAtOption } from './tokenizer';
 import type { VrLookup } from './elementHeader';
-import type { Tag } from './tag';
+import { TAG_SPECIFIC_CHARACTER_SET, type Tag } from './tag';
+import { readUiString } from './part10';
 
 /** Implicit VR Little Endian. */
 export const TS_IMPLICIT_LE = '1.2.840.10008.1.2';
@@ -41,6 +43,8 @@ export interface ParseOptions {
     readonly maxDepth?: number;
     /** Injected raw-deflate inflater for the deflated transfer syntax. */
     readonly inflate?: InflateFn;
+    /** Charset handling for string decoding (#146): assume/fallback names. */
+    readonly charset?: CharsetOptions;
 }
 
 /** Result of {@link parse}/{@link parseAsync}: always populated. */
@@ -72,8 +76,12 @@ interface Plan {
     readonly explicitVr: boolean;
     readonly littleEndian: boolean;
     readonly deflated: boolean;
+    readonly compressed: boolean;
     readonly error: DicomError | undefined;
 }
+
+/** Uncompressed (native pixel data) transfer syntaxes. */
+const NATIVE_TRANSFER_SYNTAXES: ReadonlySet<string> = new Set([TS_IMPLICIT_LE, TS_EXPLICIT_LE, TS_DEFLATED_LE, TS_EXPLICIT_BE]);
 
 function failed(header: Part10Header, bytes: Uint8Array, transferSyntax: string, error: DicomError): ParseResult {
     return {
@@ -102,6 +110,7 @@ function planParse(bytes: Uint8Array, options: ParseOptions): Plan {
         explicitVr: transferSyntax !== TS_IMPLICIT_LE,
         littleEndian: transferSyntax !== TS_EXPLICIT_BE,
         deflated: transferSyntax === TS_DEFLATED_LE,
+        compressed: transferSyntax !== '' && !NATIVE_TRANSFER_SYNTAXES.has(transferSyntax),
         error,
     };
 }
@@ -114,19 +123,66 @@ function spliceInflated(bytes: Uint8Array, dataSetPosition: number, inflated: Ui
     return full;
 }
 
+/** Raw latin-1 (0008,0005) value of a dataset, or undefined. */
+function rawSpecificCharacterSet(dataSet: DicomDataSet): string | undefined {
+    const element = dataSet.elements.get(TAG_SPECIFIC_CHARACTER_SET);
+    if (element === undefined || element.kind !== 'value' || element.length === 0) {
+        return undefined;
+    }
+    return readUiString(dataSet.bytes, element.dataOffset, element.length);
+}
+
+/** Resolves a context leniently: unsupported charsets warn and decode as Latin-1. */
+function resolveLenient(raw: string | undefined, options: ParseOptions, warnings: ParseWarning[]): CharsetContext {
+    try {
+        return resolveCharsetContext(raw, options.charset ?? {});
+    } catch (thrown) {
+        if (!(thrown instanceof DicomError)) {
+            throw thrown;
+        }
+        warnings.push({ code: 'unsupported-charset', message: `${thrown.message}; strings decode as Latin-1`, offset: 0 });
+        return LATIN1_CHARSET_CONTEXT;
+    }
+}
+
+/**
+ * Assigns charset contexts across the dataset tree (iterative walk): each item
+ * dataset inherits its parent's context unless it carries its own (0008,0005).
+ */
+function assignCharsets(root: DicomDataSet, options: ParseOptions, warnings: ParseWarning[]): void {
+    const rootContext = resolveLenient(rawSpecificCharacterSet(root), options, warnings);
+    const queue: { dataSet: DicomDataSet; context: CharsetContext }[] = [{ dataSet: root, context: rootContext }];
+    while (queue.length > 0) {
+        const { dataSet, context } = queue.pop() as { dataSet: DicomDataSet; context: CharsetContext };
+        dataSet.applyCharset(context);
+        for (const element of dataSet.elements.values()) {
+            if (element.kind !== 'sequence') {
+                continue;
+            }
+            for (const item of element.items) {
+                const own = rawSpecificCharacterSet(item.dataSet);
+                queue.push({ dataSet: item.dataSet, context: own === undefined ? context : resolveLenient(own, options, warnings) });
+            }
+        }
+    }
+}
+
 function parseDataSet(plan: Plan, bytes: Uint8Array, options: ParseOptions): ParseResult {
     const warnings = [...plan.header.warnings];
     const stream = new ByteStream(bytes, { position: plan.header.dataSetPosition, littleEndian: plan.littleEndian, warnings });
     const result = readElements(stream, {
         explicitVr: plan.explicitVr,
+        compressedTransferSyntax: plan.compressed,
         ...(options.vrLookup === undefined ? {} : { vrLookup: options.vrLookup }),
         ...(options.stopAt === undefined ? {} : { stopAt: options.stopAt }),
         ...(options.maxDepth === undefined ? {} : { maxDepth: options.maxDepth }),
     });
+    const dataSet = new DicomDataSet(bytes, plan.littleEndian, result.elements);
+    assignCharsets(dataSet, options, warnings);
     return {
         ok: result.error === undefined,
         meta: plan.header.meta,
-        dataSet: new DicomDataSet(bytes, plan.littleEndian, result.elements),
+        dataSet,
         transferSyntax: plan.transferSyntax,
         bytes,
         warnings,
