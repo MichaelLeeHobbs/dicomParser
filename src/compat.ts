@@ -31,6 +31,8 @@
  * - `string()` is charset-aware (honors SpecificCharacterSet), so a value under
  *   a non-Latin charset decodes to real text rather than mojibake (review A5);
  *   consumers that re-decode raw bytes should read the bytes, not `string()`.
+ *   With `parseDicom`'s core, `string()` can also decode a value detected as
+ *   mislabeled UTF-8 as UTF-8 when `utf8MislabelPromote` is set (review C4).
  * - Accessor edge cases return `undefined` rather than throwing or reading a
  *   neighbor element (out-of-range `string(tag,i)`/`uint16(tag,i)`,
  *   whitespace-only `floatString`), matching the core (review A6).

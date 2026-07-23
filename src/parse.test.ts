@@ -308,3 +308,81 @@ describe('parse — charset-aware string decoding (#146)', () => {
         expect(items[1]?.dataSet.charset?.terms).toEqual(['ISO_IR 144']);
     });
 });
+
+describe('parse — UTF-8 mislabel detection (review C4)', () => {
+    function fileWith(charset: string, pnBytes: Uint8Array): Uint8Array {
+        const cs = explicitEl('00080005', 'CS', latin1(charset));
+        const pn = explicitEl('00100010', 'PN', pnBytes.length % 2 === 0 ? pnBytes : concat([pnBytes, latin1(' ')]));
+        return p10(TS.explicitLE, [cs, pn]);
+    }
+
+    it('warns on a UTF-8 name mislabeled as ISO_IR 100 and decodes as declared by default', () => {
+        const file = fileWith('ISO_IR 100', new TextEncoder().encode('Müller^José'));
+        const result = parse(file);
+        expect(result.ok).toBe(true);
+        expect(result.warnings.filter(w => w.code === 'utf8-mislabel')).toHaveLength(1);
+        // default: decoded as the declared single-byte charset (the mojibake)
+        expect(result.dataSet.string('x00100010')).toBe('MÃ¼ller^JosÃ©');
+    });
+
+    it('promotes to UTF-8 when utf8MislabelPromote is set', () => {
+        const file = fileWith('ISO_IR 100', new TextEncoder().encode('Müller^José'));
+        const result = parse(file, { utf8MislabelPromote: true });
+        expect(result.warnings.filter(w => w.code === 'utf8-mislabel')).toHaveLength(1);
+        expect(result.dataSet.string('x00100010')).toBe('Müller^José');
+    });
+
+    it('does not warn on genuine Latin-1 that is not valid UTF-8 (no false positive)', () => {
+        const file = fileWith('ISO_IR 100', latin1('M\xfcller'));
+        const result = parse(file);
+        expect(result.warnings.some(w => w.code === 'utf8-mislabel')).toBe(false);
+        expect(result.dataSet.string('x00100010')).toBe('Müller');
+    });
+
+    it('does not detect under a multi-byte context (singleByte gate)', () => {
+        const file = fileWith('ISO_IR 192', new TextEncoder().encode('Müller'));
+        const result = parse(file);
+        expect(result.warnings.some(w => w.code === 'utf8-mislabel')).toBe(false);
+        expect(result.dataSet.string('x00100010')).toBe('Müller');
+    });
+
+    it('warns once per tag and promotes per element inside sequence items', () => {
+        const mis = new TextEncoder().encode('王^小东');
+        const item = concat([explicitEl('00100010', 'PN', mis.length % 2 === 0 ? mis : concat([mis, latin1(' ')]))]);
+        const file = p10(TS.explicitLE, [explicitEl('00080005', 'CS', latin1('ISO_IR 100')), sqExplicit('00081110', [item])]);
+        const result = parse(file, { utf8MislabelPromote: true });
+        expect(result.warnings.filter(w => w.code === 'utf8-mislabel')).toHaveLength(1);
+        const seq = result.dataSet.element('x00081110') as SequenceElement;
+        expect(seq.items[0]?.dataSet.string('x00100010')).toBe('王^小东');
+    });
+
+    it('C5: aliases a code-extension bare ISO_IR term and warns nonstandard-charset', () => {
+        const cs = explicitEl('00080005', 'CS', latin1(`ISO_IR 100${String.fromCharCode(92)}ISO 2022 IR 87`));
+        const pn = explicitEl('00100010', 'PN', latin1('Müller'));
+        const result = parse(p10(TS.explicitLE, [cs, pn]));
+        expect(result.ok).toBe(true);
+        expect(result.warnings.some(w => w.code === 'nonstandard-charset')).toBe(true);
+        expect(result.dataSet.charset?.terms?.[0]).toBe('ISO 2022 IR 100');
+        expect(result.dataSet.string('x00100010')).toBe('Müller');
+    });
+});
+
+describe('parse — charset warning dedup + mislabel bounds (review verify)', () => {
+    it('emits one nonstandard-charset warning even when items repeat the aliased charset', () => {
+        const BS = String.fromCharCode(92);
+        const cs = explicitEl('00080005', 'CS', latin1(`ISO_IR 100${BS}ISO 2022 IR 87`));
+        const itemBytes = concat([explicitEl('00080005', 'CS', latin1(`ISO_IR 100${BS}ISO 2022 IR 87`)), explicitEl('00100010', 'PN', latin1('M\xfcller'))]);
+        const file = p10(TS.explicitLE, [cs, sqExplicit('00081110', [itemBytes, itemBytes])]);
+        const result = parse(file);
+        expect(result.warnings.filter(w => w.code === 'nonstandard-charset')).toHaveLength(1);
+    });
+
+    it('promotion off (default) never corrupts a short all-caps Cyrillic value despite a spurious warning', () => {
+        // ЮГ = 0xCE 0xB3 under ISO_IR 144 — also valid UTF-8, so the heuristic warns,
+        // but with promote off the value decodes as the declared Cyrillic charset
+        const cs = explicitEl('00080005', 'CS', latin1('ISO_IR 144'));
+        const lo = explicitEl('00081090', 'LO', Uint8Array.from([0xce, 0xb3]));
+        const result = parse(p10(TS.explicitLE, [cs, lo]));
+        expect(result.dataSet.string('x00081090')).toBe('ЮГ');
+    });
+});

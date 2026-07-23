@@ -337,13 +337,29 @@ export interface CharsetContext {
     readonly initialG1: SegmentDecoder | undefined;
     /** Whether the context is a single-byte repertoire (UTF-8 mislabel detection applies). */
     readonly singleByte: boolean;
+    /** `true` when a bare `ISO_IR n` term was normalized to its `ISO 2022 IR n` form in a code-extension context (#C5). */
+    readonly aliased: boolean;
 }
 
 /** The default context (ISO_IR 6 / ASCII). */
-export const DEFAULT_CHARSET_CONTEXT: CharsetContext = { terms: ['ISO_IR 6'], iso2022: false, initial: LATIN1, initialG1: undefined, singleByte: true };
+export const DEFAULT_CHARSET_CONTEXT: CharsetContext = {
+    terms: ['ISO_IR 6'],
+    iso2022: false,
+    initial: LATIN1,
+    initialG1: undefined,
+    singleByte: true,
+    aliased: false,
+};
 
 /** The Latin-1 context used as the lenient last-resort fallback. */
-export const LATIN1_CHARSET_CONTEXT: CharsetContext = { terms: ['ISO_IR 100'], iso2022: false, initial: LATIN1, initialG1: undefined, singleByte: true };
+export const LATIN1_CHARSET_CONTEXT: CharsetContext = {
+    terms: ['ISO_IR 100'],
+    iso2022: false,
+    initial: LATIN1,
+    initialG1: undefined,
+    singleByte: true,
+    aliased: false,
+};
 
 /**
  * Normalizes a user-supplied charset name (alias or defined term) to a DICOM
@@ -357,19 +373,38 @@ export function normalizeCharsetName(input: string): string | undefined {
     return CHARSET_ALIASES[trimmed.toLowerCase()];
 }
 
+/**
+ * Maps a bare `ISO_IR n` term to its `ISO 2022 IR n` equivalent, or `undefined`
+ * when there is none. Membership-gated on {@link ISO2022_INITIAL}, so no term is
+ * invented (`ISO_IR 999` still fails). DCMTK accepts this non-standard spelling
+ * in a code-extension context; PS3.5 C.12.1.1.2 mandates the `ISO 2022` terms
+ * whenever the value is multi-valued.
+ */
+function toIso2022Term(term: string): string | undefined {
+    if (!term.startsWith('ISO_IR ')) {
+        return undefined;
+    }
+    const candidate = `ISO 2022 IR ${term.slice(7)}`;
+    return ISO2022_INITIAL[candidate] === undefined ? undefined : candidate;
+}
+
 function buildContext(terms: readonly string[]): CharsetContext | undefined {
+    // `iso2022` is computed from the RAW terms so a single-valued 'ISO_IR 100'
+    // can never be promoted into code-extension mode by the aliasing below.
     const iso2022 = terms.length > 1 || terms.some(t => t.startsWith('ISO 2022'));
-    const first = terms[0] ?? 'ISO_IR 6';
     if (!iso2022) {
-        const initial = CHARSET_DECODERS[first];
+        const initial = CHARSET_DECODERS[terms[0] ?? 'ISO_IR 6'];
         if (initial === undefined) {
             return undefined;
         }
-        return { terms, iso2022, initial, initialG1: undefined, singleByte: isSingleByteDecoder(initial) };
+        return { terms, iso2022, initial, initialG1: undefined, singleByte: isSingleByteDecoder(initial), aliased: false };
     }
+    const resolved = terms.map(t => toIso2022Term(t) ?? t);
+    const aliased = resolved.some((t, i) => t !== terms[i]);
+    const first = resolved[0] ?? 'ISO 2022 IR 6';
     const registers = ISO2022_REGISTERS[first];
     if (registers !== undefined) {
-        return { terms, iso2022, initial: registers.g0, initialG1: registers.g1, singleByte: false };
+        return { terms: resolved, iso2022, initial: registers.g0, initialG1: registers.g1, singleByte: false, aliased };
     }
     // default: a single decoder that covers both GL (ASCII) and GR (its set),
     // used as both G0 and G1 — the split is a no-op unless an escape changes one
@@ -377,7 +412,7 @@ function buildContext(terms: readonly string[]): CharsetContext | undefined {
     if (initial === undefined) {
         return undefined;
     }
-    return { terms, iso2022, initial, initialG1: initial, singleByte: false };
+    return { terms: resolved, iso2022, initial, initialG1: initial, singleByte: false, aliased };
 }
 
 /** Parses raw SpecificCharacterSet values into normalized terms. An empty first value means the default repertoire. */

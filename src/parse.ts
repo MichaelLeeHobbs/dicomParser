@@ -10,14 +10,15 @@
  */
 
 import { ByteStream } from './byteStream';
-import { LATIN1_CHARSET_CONTEXT, resolveCharsetContext, type CharsetContext, type CharsetOptions } from './charset';
+import { isProbableUtf8Mislabel, LATIN1_CHARSET_CONTEXT, resolveCharsetContext, type CharsetContext, type CharsetOptions } from './charset';
 import { DicomDataSet } from './dataSet';
 import { DicomError, type ParseWarning } from './errors';
 import { inflateRaw, inflateRawAsync, type InflateFn } from './inflate';
 import { readPart10Header, type Part10Header } from './part10';
 import { readElements, type StopAtOption } from './tokenizer';
 import type { VrLookup } from './elementHeader';
-import { TAG_SPECIFIC_CHARACTER_SET, type Tag } from './tag';
+import { TAG_SPECIFIC_CHARACTER_SET, tagToString, type Tag } from './tag';
+import { isCharsetAffectedVr } from './vr';
 import { readUiString } from './part10';
 
 /** Implicit VR Little Endian. */
@@ -47,6 +48,20 @@ export interface ParseOptions {
     readonly inflate?: InflateFn;
     /** Charset handling for string decoding (#146): assume/fallback names. */
     readonly charset?: CharsetOptions;
+    /**
+     * Decode values detected as mislabeled UTF-8 (a single-byte charset whose
+     * bytes are valid UTF-8 with multi-byte sequences) as UTF-8 instead of the
+     * declared charset. A `utf8-mislabel` warning is emitted regardless; this
+     * only changes the decoded value. Detection needs an explicit VR, so it is
+     * skipped for implicit-VR text elements without a `vrLookup`.
+     *
+     * The heuristic is inherently ambiguous for short values: a 2-byte all-caps
+     * Cyrillic (ISO_IR 144) pair such as `ЮГ` is also valid UTF-8, so it may be
+     * warned (and, with this flag, mis-promoted). Because promotion is opt-in
+     * and off by default, the default cost is only an advisory warning; enable
+     * this only when you expect mislabeled UTF-8 in single-byte-declared files.
+     */
+    readonly utf8MislabelPromote?: boolean;
     /** Maximum inflated size in bytes for deflated files (default 256 MiB). */
     readonly maxInflatedBytes?: number;
 }
@@ -147,7 +162,15 @@ function rawSpecificCharacterSet(dataSet: DicomDataSet): string | undefined {
 /** Resolves a context leniently: unsupported charsets warn and decode as Latin-1. */
 function resolveLenient(raw: string | undefined, options: ParseOptions, warnings: ParseWarning[]): CharsetContext {
     try {
-        return resolveCharsetContext(raw, options.charset ?? {});
+        const context = resolveCharsetContext(raw, options.charset ?? {});
+        if (context.aliased) {
+            const message = `bare ISO_IR term in a code-extension SpecificCharacterSet ('${String(raw)}') read as its ISO 2022 equivalent`;
+            // dedupe: the same (0008,0005) value repeated across sequence items warns once
+            if (!warnings.some(w => w.code === 'nonstandard-charset' && w.message === message)) {
+                warnings.push({ code: 'nonstandard-charset', message, offset: 0 });
+            }
+        }
+        return context;
     } catch (thrown) {
         if (!(thrown instanceof DicomError)) {
             throw thrown;
@@ -157,16 +180,61 @@ function resolveLenient(raw: string | undefined, options: ParseOptions, warnings
     }
 }
 
+/** Parse-wide state for UTF-8 mislabel detection across the dataset tree. */
+interface MislabelState {
+    readonly promote: boolean;
+    /** Tags already warned about (one warning per distinct tag per parse). */
+    readonly seen: Set<Tag>;
+    readonly warnings: ParseWarning[];
+}
+
+/**
+ * Detects charset-affected values (SH/LO/ST/LT/UC/UT/PN) under a single-byte
+ * context that are probably mislabeled UTF-8: emits one `utf8-mislabel` warning
+ * per distinct tag, and — when promoting — marks them to decode as UTF-8.
+ */
+function detectUtf8Mislabels(dataSet: DicomDataSet, context: CharsetContext, state: MislabelState): void {
+    if (!context.singleByte) {
+        return;
+    }
+    const promoted = new Set<Tag>();
+    for (const element of dataSet.elements.values()) {
+        if (element.kind !== 'value' || !isCharsetAffectedVr(element.vr)) {
+            continue;
+        }
+        if (!isProbableUtf8Mislabel(dataSet.bytes.subarray(element.dataOffset, element.dataOffset + element.length))) {
+            continue;
+        }
+        if (!state.seen.has(element.tag)) {
+            state.seen.add(element.tag);
+            const action = state.promote ? 'decoded as UTF-8' : `decoded as '${context.terms.join('\\')}'`;
+            state.warnings.push({
+                code: 'utf8-mislabel',
+                message: `possible UTF-8 mislabel: ${tagToString(element.tag)} (${action})`,
+                offset: element.dataOffset,
+            });
+        }
+        promoted.add(element.tag);
+    }
+    if (state.promote && promoted.size > 0) {
+        dataSet.applyUtf8Promotion(promoted);
+    }
+}
+
 /**
  * Assigns charset contexts across the dataset tree (iterative walk): each item
  * dataset inherits its parent's context unless it carries its own (0008,0005).
+ * Runs UTF-8 mislabel detection per dataset so warnings exist at parse time.
  */
 function assignCharsets(root: DicomDataSet, options: ParseOptions, warnings: ParseWarning[]): void {
-    const rootContext = resolveLenient(rawSpecificCharacterSet(root), options, warnings);
-    const queue: { dataSet: DicomDataSet; context: CharsetContext }[] = [{ dataSet: root, context: rootContext }];
+    const state: MislabelState = { promote: options.utf8MislabelPromote === true, seen: new Set<Tag>(), warnings };
+    const queue: { dataSet: DicomDataSet; context: CharsetContext }[] = [
+        { dataSet: root, context: resolveLenient(rawSpecificCharacterSet(root), options, warnings) },
+    ];
     while (queue.length > 0) {
         const { dataSet, context } = queue.pop() as { dataSet: DicomDataSet; context: CharsetContext };
         dataSet.applyCharset(context);
+        detectUtf8Mislabels(dataSet, context, state);
         for (const element of dataSet.elements.values()) {
             if (element.kind !== 'sequence') {
                 continue;

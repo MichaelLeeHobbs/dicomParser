@@ -28,7 +28,7 @@ export {
     type Tag,
     type TagLike,
 } from './tag';
-export { KNOWN_VRS, explicitLengthBytes, isKnownVr, isStringVr, type Vr } from './vr';
+export { KNOWN_VRS, explicitLengthBytes, isCharsetAffectedVr, isKnownVr, isStringVr, type Vr } from './vr';
 export { ByteStream, type ByteStreamOptions } from './byteStream';
 export { readExplicitElementHeader, readImplicitElementHeader, type ElementHeader, type VrLookup, type VrSource } from './elementHeader';
 export type { DicomElement, ElementBase, EncapsulatedElement, Fragment, SequenceElement, SequenceItem, UnknownElement, ValueElement } from './element';
