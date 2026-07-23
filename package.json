@@ -13,6 +13,11 @@
             "import": "./dist/index.js",
             "require": "./dist/index.cjs"
         },
+        "./compat": {
+            "types": "./dist/compat.d.ts",
+            "import": "./dist/compat.js",
+            "require": "./dist/compat.cjs"
+        },
         "./package.json": "./package.json"
     },
     "files": [
@@ -67,6 +72,7 @@
         "@eslint/js": "^10.0.1",
         "@types/node": "^26.1.1",
         "@vitest/coverage-v8": "^4.1.10",
+        "dicom-parser": "1.8.21",
         "eslint": "^10.7.0",
         "eslint-config-prettier": "^10.1.8",
         "eslint-plugin-prettier": "^5.5.6",
