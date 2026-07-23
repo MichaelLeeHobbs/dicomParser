@@ -10,8 +10,11 @@ fork; `legacy/` and `legacy-test/` hold the original JS source and karma tests a
 reference (excluded from all tooling; deleted before 2.0.0 final). `testImages/` holds binary
 DICOM fixtures.
 
-**PLAN.md is the governing document** — phases, the 13-item requirements backlog derived from the
-full upstream issue/PR triage, and the verification gates. Update it as phases complete.
+**PLAN.md is the governing document** — progress tracker, phases, the 13-item requirements
+backlog, verification gates, and the 2.0.0 definition-of-done checklist. Update its §0 tracker
+and §9 checklist as work lands. Companion docs: `docs/upstream-triage.md` (full 45-item upstream
+triage — the raw requirements), `docs/porting-notes.md` (legacy behavior map, preserve-vs-fix
+list, assets to port from dcmtk.js, toolchain gotchas — **read before touching Phase 1**).
 
 ## Commands
 
@@ -26,8 +29,8 @@ pnpm run format:check    # Prettier
 
 ## Governing standards
 
-Same mission-critical posture as `@ubercode/dcmtk` (see that repo's
-`docs/TypeScript Coding Standard for Mission-Critical Systems.md`):
+Per `docs/TypeScript Coding Standard for Mission-Critical Systems.md` (in this repo; same
+standard as `@ubercode/dcmtk`):
 
 - No `any`; `unknown` + type guards
 - No recursion — iterative algorithms with bounded loops (this parses untrusted input)

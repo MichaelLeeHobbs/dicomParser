@@ -7,6 +7,30 @@ Upstream: `cornerstonejs/dicomParser` @ 1.8.21 (MIT, dormant since Oct 2023, 121
 cornerstonejs/dicomParser · charset decoding lives in the fork core · **DICOM writing is in scope
 for v1** (parse + serialize).
 
+**Companion documents**: [docs/upstream-triage.md](docs/upstream-triage.md) (the full 45-item
+upstream issue/PR triage behind §5) · [docs/porting-notes.md](docs/porting-notes.md) (legacy
+behavior map, preserve-vs-fix list, assets to port from dcmtk.js, toolchain gotchas) ·
+[docs/TypeScript Coding Standard for Mission-Critical Systems.md](docs/TypeScript%20Coding%20Standard%20for%20Mission-Critical%20Systems.md)
+(governing standard, copied from dcmtk.js).
+
+## 0. Progress tracker
+
+| Phase                              | Status                      | Notes                                                                                                                                                    |
+| ---------------------------------- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0 — Scaffold                       | **DONE** 2026-07-22 (PR #1) | Toolchain, CI (Node 20/22/24 green), publish workflow, SECURITY.md + private vuln reporting, `2.0.0-alpha.0` published to npm (manual bootstrap publish) |
+| 1 — Core tokenizer                 | not started                 | Gate: ported upstream tests pass                                                                                                                         |
+| 2 — Backlog items 1-12             | not started                 |                                                                                                                                                          |
+| 3 — Writer                         | not started                 |                                                                                                                                                          |
+| 4 — Compat façade                  | not started                 |                                                                                                                                                          |
+| 5 — Fuzz/perf/docs                 | not started                 |                                                                                                                                                          |
+| 6 — Release + dcmtk.js swap        | not started                 |                                                                                                                                                          |
+| 7 — Upstream v2.0 offer (optional) | not started                 |                                                                                                                                                          |
+
+Outstanding manual step: configure npm Trusted Publishing for this repo + `publish.yml` on
+npmjs.com (possible now that the package exists). Until then, tag-push publishes will fail at
+the `npm publish` step. Known cosmetic issue: npm forced `latest` → `2.0.0-alpha.0` on first
+publish (unavoidable; self-corrects at `2.0.0` final).
+
 ## 1. Mission
 
 A ground-up TypeScript remake of dicomParser: modern toolchain, real types, resolution of the
@@ -145,7 +169,7 @@ Three independent oracles — stronger than upstream ever had:
 | 3     | Writer (item 13): serializer + edit model + round-trip machinery                                                                   | Round-trip gates green (byte-identical corpus, DCMTK accepts output)                  |
 | 4     | Compat façade                                                                                                                      | dcmtk.js's `_p10ToJson` runs on `compat` unchanged; 198-file DCMTK differential green |
 | 5     | Fuzz + perf + docs (TypeDoc, migration guide, examples incl. deflated)                                                             | Fuzz clean (incl. writer-generated corpus), perf ≥ upstream, docs published           |
-| 6     | Release `1.0.0-rc.1` → swap into dcmtk.js behind the existing `engine` option → soak → `latest`                                    | d-dart soak clean                                                                     |
+| 6     | Release `2.0.0-rc.1` → swap into dcmtk.js behind the existing `engine` option → soak → `2.0.0` final                               | d-dart soak clean                                                                     |
 | 7     | (Optional) Upstream outreach: offer as v2.0 with migration guide + compat layer                                                    | —                                                                                     |
 
 ## 8. dcmtk.js integration plan
@@ -155,3 +179,48 @@ Three independent oracles — stronger than upstream ever had:
 - Then, incrementally: move dcmtk.js's charset decoding down into the fork (single implementation),
   adopt the fork's native discriminated-union API in `_p10ToJson`, and drop the
   explicit-SV/UV/OV known-limitation note from docs/CHANGELOG.
+
+## 9. Definition of done for 2.0.0 (project completeness, pino-cloudwatch-ts parity)
+
+The phases cover the code; 2.0.0 final additionally requires all of the following. Check items
+off here as they land.
+
+**Documentation**
+
+- [ ] README: badges (npm version/downloads, CI, license), install, quick-start for parse AND
+      write, API overview, migration-from-`dicom-parser` guide (or link), charset support table,
+      lenient-mode options, codec handoff recipe (fragments → external decoder)
+- [ ] Generated API docs (TypeDoc) published (GitHub Pages), TSDoc on every public symbol
+- [ ] `docs/migration-v1.md` — v1 → v2 mapping incl. compat-façade usage and divergence list
+- [ ] Examples: Node parse, Node write/round-trip, browser parse (bundler), deflated TS,
+      metadata-only fast path (`stopAt`)
+- [ ] CHANGELOG.md (Keep a Changelog; started at first beta), legacy-CHANGELOG.md retained
+
+**Quality gates (all enforced in CI)**
+
+- [ ] Coverage ≥ 95/90/95/95 with the full ported upstream suite + new fixture suites
+- [ ] Fuzz suite (fast-check + corpus mutation) in CI — crash/hang/OOM = fail
+- [ ] Bulk-parse benchmark with regression threshold vs recorded baseline (≥ upstream 1.8.21)
+- [ ] Round-trip gates: byte-identical re-serialization corpus + DCMTK accepts writer output
+      (cross-repo job or scripted local gate documented in CONTRIBUTING)
+- [ ] Browser smoke suite (Vitest browser mode) — parse + DecompressionStream path
+
+**Release engineering**
+
+- [ ] npm Trusted Publishing configured (repo + publish.yml) — no tokens anywhere
+- [ ] Provenance badge visible on npm after first CI-driven publish
+- [ ] `latest` dist-tag correct after 2.0.0 final (overwrites the forced alpha `latest`)
+- [ ] Version lineage documented: 2.x here vs upstream 1.x; deprecation guidance for
+      `dicom-parser` consumers
+
+**Repo hygiene**
+
+- [ ] `legacy/` and `legacy-test/` deleted (port complete); testImages/ retained
+- [ ] CONTRIBUTING.md (dev setup, gates, fixture-adding guide, security-sensitive areas)
+- [ ] Issue templates (bug w/ sample-file guidance, feature); PR template with gate checklist
+- [ ] Branch protection on master (CI required)
+
+**Ecosystem**
+
+- [ ] dcmtk.js swapped and soaking in d-dart (Phase 6 gate)
+- [ ] Upstream outreach decision made and, if pursued, PR/issue opened referencing #214 (Phase 7)
