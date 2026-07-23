@@ -105,6 +105,62 @@ describe('createJpegBasicOffsetTable', () => {
         // first fragment's EOI is not in the last 3 bytes, so it reads as one frame
         expect(createJpegBasicOffsetTable(result.bytes, element)).toEqual([0]);
     });
+
+    // Multi-frame coverage (review B4): forces ≥2 outer-loop iterations, the
+    // endFragmentIndex<0 early return, and the padded-last-3-bytes EOI branch
+    // (isFragmentEndOfImage's second disjunct). Each fragment item = 8-byte
+    // header + data, so offsets advance by 8 + payload length.
+    it('builds one entry per frame when each fragment ends in an EOI marker', () => {
+        // three EOI-terminated fragments (4 data bytes → 12-byte items each)
+        const fragments = [Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), Uint8Array.from([0xff, 0xd8, 0xff, 0xd9])];
+        const result = parseFile([encapsulatedWithBot(fragments, [])]);
+        const element = result.dataSet.element('x7fe00010') as NonNullable<ReturnType<typeof result.dataSet.element>>;
+        expect(createJpegBasicOffsetTable(result.bytes, element)).toEqual([0, 12, 24]);
+    });
+
+    it('groups fragments per frame when a frame spans multiple fragments', () => {
+        // A + B form frame 0 (EOI ends B), C + D form frame 1 (EOI ends D)
+        const fragments = [
+            Uint8Array.from([1, 2, 3, 4]),
+            Uint8Array.from([5, 6, 0xff, 0xd9]),
+            Uint8Array.from([7, 8, 9, 10]),
+            Uint8Array.from([11, 12, 0xff, 0xd9]),
+        ];
+        const result = parseFile([encapsulatedWithBot(fragments, [])]);
+        const element = result.dataSet.element('x7fe00010') as NonNullable<ReturnType<typeof result.dataSet.element>>;
+        // frame 0 starts at offset 0; frame 1 starts after A(12)+B(12) = offset 24
+        expect(createJpegBasicOffsetTable(result.bytes, element)).toEqual([0, 24]);
+    });
+
+    it('detects an EOI marker padded into the last three bytes', () => {
+        // frag1: EOI at position len-3 (odd-length payload padded with a trailing byte)
+        const fragments = [Uint8Array.from([1, 2, 3, 0xff, 0xd9, 0x00]), Uint8Array.from([0xff, 0xd8, 0xff, 0xd9])];
+        const result = parseFile([encapsulatedWithBot(fragments, [])]);
+        const element = result.dataSet.element('x7fe00010') as NonNullable<ReturnType<typeof result.dataSet.element>>;
+        // frag1 item = 8 + 6 = 14 bytes, so frame 1 starts at offset 14
+        expect(createJpegBasicOffsetTable(result.bytes, element)).toEqual([0, 14]);
+    });
+
+    it('returns a single entry when no fragment ends in an EOI marker (early return)', () => {
+        const fragments = [Uint8Array.from([1, 2, 3, 4]), Uint8Array.from([5, 6, 7, 8])];
+        const result = parseFile([encapsulatedWithBot(fragments, [])]);
+        const element = result.dataSet.element('x7fe00010') as NonNullable<ReturnType<typeof result.dataSet.element>>;
+        expect(createJpegBasicOffsetTable(result.bytes, element)).toEqual([0]);
+    });
+
+    it('matches NumberOfFrames on the real multi-frame JPEG-baseline fixture', async () => {
+        const { readFileSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const bytes = new Uint8Array(
+            readFileSync(join(__dirname, '..', 'testImages', 'encapsulated', 'multi-frame', 'CT0012.fragmented_no_bot_jpeg_baseline.51.dcm'))
+        );
+        const result = parse(bytes);
+        expect(result.error).toBeUndefined();
+        const element = result.dataSet.element('x7fe00010') as NonNullable<ReturnType<typeof result.dataSet.element>>;
+        const table = createJpegBasicOffsetTable(result.bytes, element);
+        expect(table[0]).toBe(0);
+        expect(table.length).toBe(result.dataSet.intString('x00280008'));
+    });
 });
 
 describe('nativePixelDataView (#73)', () => {
