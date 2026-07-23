@@ -717,6 +717,39 @@ function sq_(element: unknown): SequenceElement {
     return element as SequenceElement;
 }
 
+describe('readElements — implicit undefined-length with a VR lookup (review B4)', () => {
+    // dispatchImplicit's `header.vr !== undefined && header.hadUndefinedLength`
+    // branch: the lookup resolves a non-sequence VR, so peeking is skipped and
+    // scanUnknown runs. Existing vrLookup tests all use defined lengths and
+    // never reach it.
+    const OB_LOOKUP = (tag: number): string | undefined => (tag === 0x00080006 ? 'OB' : undefined);
+
+    it('scans an undefined-length OB (via lookup) to its item delimiter as an unknown element', () => {
+        // (0008,0006) undefined length · 4 content bytes · item delimiter (FFFE,E00D)
+        const stream = streamOf([0x08, 0x00, 0x06, 0x00, 0xff, 0xff, 0xff, 0xff, 0x41, 0x42, 0x43, 0x44, 0xfe, 0xff, 0x0d, 0xe0, 0x00, 0x00, 0x00, 0x00]);
+        const result = readElements(stream, { explicitVr: false, vrLookup: OB_LOOKUP });
+        expect(result.error).toBeUndefined();
+        expect(stream.warnings).toHaveLength(0);
+        const element = result.elements.get(tagFromString('x00080006')) as UnknownElement;
+        expect(element.kind).toBe('unknown');
+        expect(element.vr).toBe('OB');
+        expect(element.length).toBe(4);
+        expect(element.hadUndefinedLength).toBe(true);
+    });
+
+    it('bounds the scan at end of data and warns when the delimiter is missing', () => {
+        // same header + 4 content bytes and NO delimiter
+        const stream = streamOf([0x08, 0x00, 0x06, 0x00, 0xff, 0xff, 0xff, 0xff, 0x41, 0x42, 0x43, 0x44]);
+        const result = readElements(stream, { explicitVr: false, vrLookup: OB_LOOKUP });
+        expect(result.error).toBeUndefined();
+        const element = result.elements.get(tagFromString('x00080006')) as UnknownElement;
+        expect(element.kind).toBe('unknown');
+        expect(element.vr).toBe('OB');
+        expect(element.length).toBe(4);
+        expect(stream.warnings.some(w => w.code === 'missing-item-delimiter')).toBe(true);
+    });
+});
+
 describe('readElements — diagnostic warnings (adversarial review W2/W3/W5)', () => {
     it('warns on a duplicate tag at the same level (keeping the last value)', () => {
         // (0008,0018) UI 'A ', then (0008,0018) again 'B '
