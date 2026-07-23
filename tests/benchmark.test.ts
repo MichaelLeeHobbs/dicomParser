@@ -38,7 +38,11 @@ describe('benchmark: bulk parse', () => {
         new Uint8Array(readFileSync(join(IMAGES, 'encapsulated', 'single-frame', 'CT1_UNC.fragmented_bot_jpeg_ls.80.dcm'))),
     ];
 
-    it('core parse stays within the absolute budget', () => {
+    // Timing assertions are unreliable under CI runners and v8 coverage
+    // instrumentation (which slows execution several-fold), so the budget checks
+    // run only under `pnpm run bench` (which sets BENCH=1). Correctness on these
+    // files is covered by tests/fixtures.test.ts; this is a regression tripwire.
+    it.skipIf(process.env['BENCH'] === undefined)('core parse stays within the absolute budget', () => {
         const perFile = bench(() => {
             for (const file of files) {
                 const result = parse(file);
@@ -51,7 +55,7 @@ describe('benchmark: bulk parse', () => {
         expect(perFile).toBeLessThan(50);
     });
 
-    it.skipIf(process.env['CI'] !== undefined)('compat façade is not slower than dicom-parser@1.8.21 (local gate)', () => {
+    it.skipIf(process.env['BENCH'] === undefined)('compat façade is not slower than dicom-parser@1.8.21 (local gate)', () => {
         const legacy = legacyParser as unknown as { parseDicom(bytes: Uint8Array): unknown };
         const legacyTime = bench(() => {
             for (const file of files) {
