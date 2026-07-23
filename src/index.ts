@@ -31,3 +31,7 @@ export {
 export { KNOWN_VRS, explicitLengthBytes, isKnownVr, isStringVr, type Vr } from './vr';
 export { ByteStream, type ByteStreamOptions } from './byteStream';
 export { readExplicitElementHeader, readImplicitElementHeader, type ElementHeader, type VrLookup, type VrSource } from './elementHeader';
+export type { DicomElement, ElementBase, EncapsulatedElement, Fragment, SequenceElement, SequenceItem, UnknownElement, ValueElement } from './element';
+export { DicomDataSet } from './dataSet';
+export { scanEncapsulatedPixelData } from './encapsulated';
+export { readElements, type ReadElementsOptions, type ReadElementsResult, type StopAtOption } from './tokenizer';
