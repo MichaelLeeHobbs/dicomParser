@@ -1,7 +1,7 @@
 import { defineConfig } from 'tsdown';
 
 export default defineConfig({
-    entry: { index: 'src/index.ts' },
+    entry: { index: 'src/index.ts', compat: 'src/compat.ts' },
     tsconfig: 'tsconfig.build.json',
     format: ['esm', 'cjs'],
     dts: true,
