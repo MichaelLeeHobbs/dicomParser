@@ -48,3 +48,4 @@ export {
     type ParseOptions,
     type ParseResult,
 } from './parse';
+export { parseDA, parsePN, parseTM, type DicomDate, type DicomTime, type PersonName } from './valueParsers';
