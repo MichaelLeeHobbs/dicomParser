@@ -40,7 +40,15 @@ function readBasicOffsetTable(stream: ByteStream, end: number): number[] {
     for (let i = 0; i < entryCount; i++) {
         basicOffsetTable.push(stream.readUint32());
     }
-    stream.seek(itemLength - entryCount * 4);
+    const remainder = itemLength - entryCount * 4;
+    if (remainder !== 0) {
+        stream.warnings.push({
+            code: 'length-adjusted',
+            message: `basic offset table length ${itemLength} is not a multiple of 4; ${remainder} trailing byte(s) skipped`,
+            offset: stream.position,
+        });
+    }
+    stream.seek(remainder);
     return basicOffsetTable;
 }
 

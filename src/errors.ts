@@ -67,7 +67,11 @@ export type ParseWarningCode =
     /** A speculative sequence/encapsulation parse failed; the element was kept as an opaque value. */
     | 'sequence-fallback'
     /** An unsupported SpecificCharacterSet; strings decode as Latin-1 best-effort. */
-    | 'unsupported-charset';
+    | 'unsupported-charset'
+    /** A tag appeared more than once at the same level; the last value wins (non-conformant). */
+    | 'duplicate-tag'
+    /** A defined-length element carried an odd value length (non-conformant; values must be even). */
+    | 'odd-length';
 
 /** A recoverable anomaly recorded during parsing. */
 export interface ParseWarning {
