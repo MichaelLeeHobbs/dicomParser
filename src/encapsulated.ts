@@ -16,7 +16,7 @@ import { DicomError } from './errors';
 import type { ElementHeader } from './elementHeader';
 import { TAG_ITEM, TAG_SEQUENCE_DELIMITATION, UNDEFINED_LENGTH, tagToString } from './tag';
 
-function readBasicOffsetTable(stream: ByteStream): number[] {
+function readBasicOffsetTable(stream: ByteStream, end: number): number[] {
     const itemTag = stream.readTag();
     if (itemTag !== TAG_ITEM) {
         throw new DicomError('malformed', `encapsulated pixel data: basic offset table item (FFFE,E000) not found at offset ${stream.position - 4}`, {
@@ -27,8 +27,11 @@ function readBasicOffsetTable(stream: ByteStream): number[] {
     if (itemLength === UNDEFINED_LENGTH) {
         throw new DicomError('malformed', 'encapsulated pixel data: basic offset table item has undefined length', { offset: stream.position - 4 });
     }
-    if (itemLength > stream.remaining) {
-        throw new DicomError('buffer-overread', `encapsulated pixel data: basic offset table length ${itemLength} exceeds remaining bytes`, {
+    // Bound the table against the value end, not just the stream — for
+    // defined-length encapsulation an overlong table would otherwise read the
+    // following element's bytes as offset entries (review #2).
+    if (itemLength > end - stream.position) {
+        throw new DicomError('buffer-overread', `encapsulated pixel data: basic offset table length ${itemLength} exceeds the value bound`, {
             offset: stream.position - 4,
         });
     }
@@ -77,9 +80,19 @@ function readFragmentLength(stream: ByteStream, header: ElementHeader, end: numb
  * @throws DicomError `malformed`/`buffer-overread` when the structure is unreadable
  */
 export function scanEncapsulatedPixelData(stream: ByteStream, header: ElementHeader, end?: number): EncapsulatedElement {
-    const basicOffsetTable = readBasicOffsetTable(stream);
+    const bound = end ?? stream.length;
+    const basicOffsetTable = readBasicOffsetTable(stream, bound);
     const fragments: Fragment[] = [];
-    const { contentEnd, endOffset } = scanFragments(stream, header, fragments, end);
+    const scan = scanFragments(stream, header, fragments, end);
+    let { contentEnd, endOffset } = scan;
+    // Defined-length encapsulation has an exact value extent: always resume at
+    // it, so an early scan return (delimiter/short data) can't leave the
+    // tokenizer reading padding bytes as phantom elements (review #6).
+    if (end !== undefined && stream.position !== end) {
+        stream.seek(end - stream.position);
+        contentEnd = end;
+        endOffset = end;
+    }
     return {
         kind: 'encapsulated',
         tag: header.tag,

@@ -220,15 +220,14 @@ class Tokenizer {
             this.finalizeDataSet(frame, this.stream.position, this.stream.position);
             return;
         }
+        // Delimitation items are structural terminators at element boundaries in
+        // any non-root (item) frame — a real data element never has group FFFE,
+        // so this cannot misfire on genuine values (review #1/#3/#7).
+        if (!frame.root && this.terminateItemAtDelimiter(frame)) {
+            return;
+        }
         if (frame.undefinedLength) {
-            const peeked = this.stream.peekTag();
-            if (peeked === TAG_ITEM_DELIMITATION && this.stream.remaining >= 8) {
-                const delimiterStart = this.stream.position;
-                this.consumeDelimiter('item delimiter');
-                this.finalizeDataSet(frame, delimiterStart, this.stream.position);
-                return;
-            }
-            if (peeked === undefined || (peeked === TAG_ITEM_DELIMITATION && this.stream.remaining < 8)) {
+            if (this.stream.remaining < 8) {
                 this.warn('missing-item-delimiter', 'eof encountered before finding item delimiter (FFFE,E00D) in item of undefined length');
                 this.stream.seek(this.stream.remaining);
                 this.finalizeDataSet(frame, this.stream.position, this.stream.position);
@@ -242,6 +241,33 @@ class Tokenizer {
             return;
         }
         this.readElement(frame);
+    }
+
+    /**
+     * Terminates an item frame on a delimitation item: an Item Delimitation
+     * Item (FFFE,E00D) ends the item and is consumed; a Sequence Delimitation
+     * Item (FFFE,E0DD) ends the item without consuming it (it belongs to the
+     * enclosing sequence). Returns `true` when the frame was finalized.
+     */
+    private terminateItemAtDelimiter(frame: DataSetFrame): boolean {
+        const peeked = this.stream.peekTag();
+        if (peeked === TAG_ITEM_DELIMITATION && this.stream.remaining >= 8) {
+            const delimiterStart = this.stream.position;
+            this.consumeDelimiter('item delimiter');
+            this.finalizeDataSet(frame, delimiterStart, this.stream.position);
+            return true;
+        }
+        if (peeked === TAG_SEQUENCE_DELIMITATION) {
+            if (frame.undefinedLength) {
+                this.warn(
+                    'missing-item-delimiter',
+                    `item of undefined length ended by a sequence delimiter (FFFE,E0DD); its item delimiter (FFFE,E00D) is missing`
+                );
+            }
+            this.finalizeDataSet(frame, this.stream.position, this.stream.position);
+            return true;
+        }
+        return false;
     }
 
     /** Reads one element header and dispatches on its shape. */
@@ -277,7 +303,7 @@ class Tokenizer {
                 this.pushSequence(frame, header, false);
                 return;
             }
-            this.addElement(frame, this.scanUnknown(header));
+            this.addElement(frame, this.scanUnknown(frame, header));
             return;
         }
         // CP-246 (#141): UN with defined length parses as an implicit sequence
@@ -331,7 +357,7 @@ class Tokenizer {
         if (header.vr !== undefined) {
             // The lookup identified a non-sequence VR; peeking is skipped.
             if (header.hadUndefinedLength) {
-                this.addElement(frame, this.scanUnknown(header));
+                this.addElement(frame, this.scanUnknown(frame, header));
             } else {
                 this.readValue(frame, header);
             }
@@ -342,7 +368,7 @@ class Tokenizer {
             return;
         }
         if (header.hadUndefinedLength) {
-            this.addElement(frame, this.scanUnknown(header));
+            this.addElement(frame, this.scanUnknown(frame, header));
             return;
         }
         this.readValue(frame, header);
@@ -393,19 +419,23 @@ class Tokenizer {
 
     /**
      * Scans an undefined-length, non-sequence value for a delimitation item
-     * (either FFFE,E00D or FFFE,E0DD — files disagree; both are accepted).
+     * (either FFFE,E00D or FFFE,E0DD — files disagree; both are accepted). The
+     * scan is bounded by the enclosing frame: reaching that bound without a
+     * delimiter ends the value there rather than eating the parent's siblings
+     * to end-of-stream (review #4).
      */
-    private scanUnknown(header: ElementHeader): UnknownElement {
+    private scanUnknown(frame: DataSetFrame, header: ElementHeader): UnknownElement {
+        const maxEnd = frame.bound;
         let contentEnd: number;
         for (;;) {
-            const peeked = this.stream.peekTag();
-            if (peeked === undefined) {
+            if (this.stream.position >= maxEnd || this.stream.remaining < 8) {
                 this.warn('missing-item-delimiter', `element ${tagToString(header.tag)} of undefined length has no delimitation item; using end of data`);
-                this.stream.seek(this.stream.remaining);
+                this.stream.seek(maxEnd - this.stream.position);
                 contentEnd = this.stream.position;
                 break;
             }
-            if ((peeked === TAG_ITEM_DELIMITATION || peeked === TAG_SEQUENCE_DELIMITATION) && this.stream.remaining >= 8) {
+            const peeked = this.stream.peekTag();
+            if (peeked === TAG_ITEM_DELIMITATION || peeked === TAG_SEQUENCE_DELIMITATION) {
                 contentEnd = this.stream.position;
                 this.consumeDelimiter(`delimiter of ${tagToString(header.tag)}`);
                 break;
@@ -485,12 +515,19 @@ class Tokenizer {
         }
         const itemLength = this.stream.readUint32();
         const undefinedLength = itemLength === UNDEFINED_LENGTH;
-        let bound = this.stream.length;
+        // An item is bounded by its enclosing sequence, never by the whole
+        // stream — otherwise an overlong item length silently pulls the
+        // sequence's following siblings into the item (review #5).
+        let bound = frame.bound;
         if (!undefinedLength) {
-            bound = this.stream.position + itemLength;
-            if (bound > this.stream.length) {
-                throw new DicomError('malformed', `sequence item length ${itemLength} at offset ${itemStart} overruns end of data`, { offset: itemStart });
+            const declaredEnd = this.stream.position + itemLength;
+            if (declaredEnd > frame.bound) {
+                if (declaredEnd > this.stream.length) {
+                    throw new DicomError('malformed', `sequence item length ${itemLength} at offset ${itemStart} overruns end of data`, { offset: itemStart });
+                }
+                this.warn('length-adjusted', `sequence item length ${itemLength} at offset ${itemStart} overruns its sequence; clamped to the sequence bound`);
             }
+            bound = Math.min(declaredEnd, frame.bound);
         }
         this.stack.push({
             kind: 'dataset',
