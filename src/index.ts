@@ -30,3 +30,4 @@ export {
 } from './tag';
 export { KNOWN_VRS, explicitLengthBytes, isKnownVr, isStringVr, type Vr } from './vr';
 export { ByteStream, type ByteStreamOptions } from './byteStream';
+export { readExplicitElementHeader, readImplicitElementHeader, type ElementHeader, type VrLookup, type VrSource } from './elementHeader';
