@@ -1,0 +1,8 @@
+dist/
+coverage/
+node_modules/
+legacy/
+legacy-test/
+testImages/
+pnpm-lock.yaml
+legacy-CHANGELOG.md
