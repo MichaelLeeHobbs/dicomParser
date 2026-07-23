@@ -366,3 +366,23 @@ describe('parse — UTF-8 mislabel detection (review C4)', () => {
         expect(result.dataSet.string('x00100010')).toBe('Müller');
     });
 });
+
+describe('parse — charset warning dedup + mislabel bounds (review verify)', () => {
+    it('emits one nonstandard-charset warning even when items repeat the aliased charset', () => {
+        const BS = String.fromCharCode(92);
+        const cs = explicitEl('00080005', 'CS', latin1(`ISO_IR 100${BS}ISO 2022 IR 87`));
+        const itemBytes = concat([explicitEl('00080005', 'CS', latin1(`ISO_IR 100${BS}ISO 2022 IR 87`)), explicitEl('00100010', 'PN', latin1('M\xfcller'))]);
+        const file = p10(TS.explicitLE, [cs, sqExplicit('00081110', [itemBytes, itemBytes])]);
+        const result = parse(file);
+        expect(result.warnings.filter(w => w.code === 'nonstandard-charset')).toHaveLength(1);
+    });
+
+    it('promotion off (default) never corrupts a short all-caps Cyrillic value despite a spurious warning', () => {
+        // ЮГ = 0xCE 0xB3 under ISO_IR 144 — also valid UTF-8, so the heuristic warns,
+        // but with promote off the value decodes as the declared Cyrillic charset
+        const cs = explicitEl('00080005', 'CS', latin1('ISO_IR 144'));
+        const lo = explicitEl('00081090', 'LO', Uint8Array.from([0xce, 0xb3]));
+        const result = parse(p10(TS.explicitLE, [cs, lo]));
+        expect(result.dataSet.string('x00081090')).toBe('ЮГ');
+    });
+});

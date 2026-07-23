@@ -54,6 +54,12 @@ export interface ParseOptions {
      * declared charset. A `utf8-mislabel` warning is emitted regardless; this
      * only changes the decoded value. Detection needs an explicit VR, so it is
      * skipped for implicit-VR text elements without a `vrLookup`.
+     *
+     * The heuristic is inherently ambiguous for short values: a 2-byte all-caps
+     * Cyrillic (ISO_IR 144) pair such as `ЮГ` is also valid UTF-8, so it may be
+     * warned (and, with this flag, mis-promoted). Because promotion is opt-in
+     * and off by default, the default cost is only an advisory warning; enable
+     * this only when you expect mislabeled UTF-8 in single-byte-declared files.
      */
     readonly utf8MislabelPromote?: boolean;
     /** Maximum inflated size in bytes for deflated files (default 256 MiB). */
@@ -158,11 +164,11 @@ function resolveLenient(raw: string | undefined, options: ParseOptions, warnings
     try {
         const context = resolveCharsetContext(raw, options.charset ?? {});
         if (context.aliased) {
-            warnings.push({
-                code: 'nonstandard-charset',
-                message: `bare ISO_IR term in a code-extension SpecificCharacterSet ('${String(raw)}') read as its ISO 2022 equivalent`,
-                offset: 0,
-            });
+            const message = `bare ISO_IR term in a code-extension SpecificCharacterSet ('${String(raw)}') read as its ISO 2022 equivalent`;
+            // dedupe: the same (0008,0005) value repeated across sequence items warns once
+            if (!warnings.some(w => w.code === 'nonstandard-charset' && w.message === message)) {
+                warnings.push({ code: 'nonstandard-charset', message, offset: 0 });
+            }
         }
         return context;
     } catch (thrown) {
