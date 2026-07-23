@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { DicomError } from './errors';
 import { parse, TS_DEFLATED_LE, TS_EXPLICIT_LE, TS_IMPLICIT_LE } from './parse';
 import { encodeDataSet } from './writer';
@@ -253,5 +255,128 @@ describe('toWriteModel + serializeParsed idempotence', () => {
         const result = parse(bytes, { transferSyntax: TS_EXPLICIT_LE });
         expect(result.error).toBeUndefined();
         expect(() => toWriteModel(result.dataSet)).toThrow(/cannot be re-encoded/);
+    });
+});
+
+describe('serializeParsed — completeness guard (review W7)', () => {
+    const threeElementFile = (): Uint8Array =>
+        writeFile({ dataSet: dataSet([element('00080060', 'CS', 'CT'), element('00100010', 'PN', 'A^B'), element('00280010', 'US', [512])]) });
+
+    it('serializes a full ok parse identically, with or without options', () => {
+        const file = threeElementFile();
+        const parsed = parse(file);
+        // precondition: a complete, unstopped, error-free parse
+        expect(parsed.ok).toBe(true);
+        expect(parsed.error).toBeUndefined();
+        expect(parsed.stoppedAt).toBeUndefined();
+
+        const a = serializeParsed(parsed);
+        const b = serializeParsed(parsed, {});
+        const c = serializeParsed(parsed, { allowPartial: true });
+        expect(Array.from(a)).toEqual(Array.from(file));
+        expect(Array.from(b)).toEqual(Array.from(file));
+        expect(Array.from(c)).toEqual(Array.from(file));
+    });
+
+    it('refuses a stopAt-terminated parse by default', () => {
+        const parsed = parse(threeElementFile(), { stopAt: { tag: 'x00280010', inclusive: false } });
+        // precondition: ok=true but halted early — !ok alone would miss this
+        expect(parsed.ok).toBe(true);
+        expect(parsed.stoppedAt).not.toBeUndefined();
+
+        expect(() => serializeParsed(parsed)).toThrow(DicomError);
+        try {
+            serializeParsed(parsed);
+            expect.unreachable('should have thrown');
+        } catch (err) {
+            expect(err).toBeInstanceOf(DicomError);
+            expect((err as DicomError).code).toBe('invalid-argument');
+            expect((err as DicomError).message).toMatch(/stopped early at .*allowPartial/);
+        }
+    });
+
+    it('serializes a truncated stopAt parse under allowPartial', () => {
+        const parsed = parse(threeElementFile(), { stopAt: { tag: 'x00280010', inclusive: false } });
+        const bytes = serializeParsed(parsed, { allowPartial: true });
+        expect(bytes.length).toBeGreaterThan(0);
+
+        const reparsed = parse(bytes);
+        expect(reparsed.ok).toBe(true);
+        expect(reparsed.dataSet.element('x00080060')).not.toBeUndefined();
+        expect(reparsed.dataSet.element('x00100010')).not.toBeUndefined();
+        expect(reparsed.dataSet.element('x00280010')).toBeUndefined();
+    });
+
+    it('refuses a failed parse by default and reports the cause', () => {
+        const file = threeElementFile();
+        // cut the trailing defined-length value so it overruns EOF
+        let result = parse(file);
+        for (let cut = 1; cut < file.length; cut++) {
+            const candidate = parse(file.subarray(0, file.length - cut));
+            if (!candidate.ok && candidate.error !== undefined) {
+                result = candidate;
+                break;
+            }
+        }
+        // precondition: a genuine failure carrying an error
+        expect(result.ok).toBe(false);
+        expect(result.error).not.toBeUndefined();
+
+        expect(() => serializeParsed(result)).toThrow(DicomError);
+        try {
+            serializeParsed(result);
+            expect.unreachable('should have thrown');
+        } catch (err) {
+            expect(err).toBeInstanceOf(DicomError);
+            expect((err as DicomError).code).toBe('invalid-argument');
+            expect((err as DicomError).message).toMatch(/failed parse.*allowPartial/);
+            expect((err as DicomError).cause).toBe(result.error);
+        }
+    });
+
+    it('serializes a partial dataset from a failed parse under allowPartial', () => {
+        const file = threeElementFile();
+        let result = parse(file);
+        for (let cut = 1; cut < file.length; cut++) {
+            const candidate = parse(file.subarray(0, file.length - cut));
+            if (!candidate.ok && candidate.error !== undefined) {
+                result = candidate;
+                break;
+            }
+        }
+        expect(result.ok).toBe(false);
+        expect(result.error).not.toBeUndefined();
+
+        const bytes = serializeParsed(result, { allowPartial: true });
+        const reparsed = parse(bytes);
+        expect(reparsed.ok).toBe(true);
+        // the elements parsed before the failure survive the round-trip
+        expect(reparsed.dataSet.element('x00080060')).not.toBeUndefined();
+        expect(reparsed.dataSet.element('x00100010')).not.toBeUndefined();
+    });
+
+    it('does not trip the guard on a warnings-only parse', () => {
+        // headerless explicit-LE dataset with the same tag twice: emits a
+        // 'duplicate-tag' warning (last value wins) but parses ok with no
+        // error/stop, and re-encodes cleanly. (The plan suggested an odd-length
+        // value here, but a genuinely odd value is rejected by the encoder's
+        // even-length rule on re-serialization — an unrelated throw — so a
+        // duplicate-tag warning is used to isolate the W7 guard.)
+        const duplicate = Uint8Array.from([
+            0x08, 0x00, 0x60, 0x00, 0x43, 0x53, 0x02, 0x00, 0x43, 0x54, 0x08, 0x00, 0x60, 0x00, 0x43, 0x53, 0x02, 0x00, 0x4d, 0x52,
+        ]);
+        const result = parse(duplicate, { transferSyntax: TS_EXPLICIT_LE });
+        expect(result.ok).toBe(true);
+        expect(result.error).toBeUndefined();
+        expect(result.stoppedAt).toBeUndefined();
+        expect(result.warnings.some(w => w.code === 'duplicate-tag')).toBe(true);
+        expect(() => serializeParsed(result)).not.toThrow();
+    });
+
+    it('allowPartial does not mask an unsupported big-endian throw', () => {
+        const bytes = new Uint8Array(readFileSync(join(__dirname, '..', 'testImages', 'CT1_UNC.explicit_big_endian.dcm')));
+        const result = parse(bytes);
+        expect(() => serializeParsed(result, { allowPartial: true })).toThrow(DicomError);
+        expect(() => serializeParsed(result, { allowPartial: true })).toThrow(/read-only/);
     });
 });

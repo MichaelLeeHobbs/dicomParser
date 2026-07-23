@@ -9,7 +9,7 @@ import { DicomDataSet } from './dataSet';
 import { DicomError } from './errors';
 import type { ParseResult } from './parse';
 import { TS_DEFLATED_LE, TS_EXPLICIT_BE, TS_EXPLICIT_LE, TS_GE_PRIVATE_DLX, TS_IMPLICIT_LE } from './parse';
-import { toTag, type TagLike } from './tag';
+import { tagToString, toTag, type TagLike } from './tag';
 import { encodeDataSet, type EncodeOptions } from './writer';
 import { dataSet as buildDataSet, element, toWriteModel, type WriteDataSet, type WriteElement } from './writeModel';
 
@@ -137,6 +137,37 @@ export function writeFile(options: WriteFileOptions): Uint8Array {
     return out;
 }
 
+/** Options for {@link serializeParsed}. */
+export interface SerializeParsedOptions {
+    /**
+     * Serialize even a partial (`error`) or `stopAt`-terminated parse. Off by
+     * default so an incomplete parse cannot silently produce a truncated file.
+     */
+    readonly allowPartial?: boolean;
+}
+
+/**
+ * Builds the completeness-guard error for {@link serializeParsed}: a failed
+ * parse reports its underlying error (as `cause`), a `stopAt`-terminated parse
+ * reports the stop tag. A concrete error takes precedence over a stop tag.
+ *
+ * @param result - The offending parse result
+ * @returns The `invalid-argument` {@link DicomError} to throw
+ */
+function guardError(result: ParseResult): DicomError {
+    if (result.error !== undefined) {
+        return new DicomError(
+            'invalid-argument',
+            `refusing to serialize a failed parse (${result.error.code}): ${result.error.message}; pass { allowPartial: true } to serialize the partial dataset`,
+            { cause: result.error, ...(result.error.offset === undefined ? {} : { offset: result.error.offset }) }
+        );
+    }
+    return new DicomError(
+        'invalid-argument',
+        `refusing to serialize a parse stopped early at ${tagToString(result.stoppedAt as number)} (stopAt); pass { allowPartial: true } to serialize the truncated dataset`
+    );
+}
+
 /**
  * Re-serializes a parsed file: the original preamble/DICM/meta bytes are kept
  * verbatim and the dataset is re-encoded from the parsed model.
@@ -145,12 +176,26 @@ export function writeFile(options: WriteFileOptions): Uint8Array {
  * (the round-trip gate); deflated files re-compress (parse-equal, not
  * byte-equal). Explicit big endian is read-only and raises `unsupported`.
  *
- * @param result - A successful parse result
+ * By default an incomplete parse — one that failed (`error`) or was halted by
+ * `stopAt` (`stoppedAt`) — is refused, because a truncated Part-10 file is
+ * still structurally valid DICOM up to the cut and would be read without
+ * complaint. Pass `{ allowPartial: true }` to deliberately serialize the
+ * partial dataset. Warnings-only parses (`ok`, no error/stop) serialize
+ * normally.
+ *
+ * @param result - A successful parse result (or partial, with `allowPartial`)
+ * @param options - Serialization options; see {@link SerializeParsedOptions}
  * @returns The re-serialized file bytes
- * @throws DicomError `unsupported` for big-endian input; `invalid-argument`
- *         for datasets containing non-re-encodable (unknown-kind) elements
+ * @throws DicomError `invalid-argument` when `result` is a failed or
+ *         `stopAt`-terminated parse and `allowPartial` is not set, or for
+ *         datasets containing non-re-encodable (unknown-kind) elements;
+ *         `unsupported` for big-endian input (never suppressed by
+ *         `allowPartial`)
  */
-export function serializeParsed(result: ParseResult): Uint8Array {
+export function serializeParsed(result: ParseResult, options: SerializeParsedOptions = {}): Uint8Array {
+    if (options.allowPartial !== true && (!result.ok || result.error !== undefined || result.stoppedAt !== undefined)) {
+        throw guardError(result);
+    }
     if (result.transferSyntax === TS_EXPLICIT_BE) {
         throw new DicomError('unsupported', 'explicit big endian is read-only; re-encode via a little-endian write model instead');
     }
@@ -191,6 +236,14 @@ export interface DataSetEdits {
 /**
  * Builds a write model from a parsed dataset with edits applied
  * (parse → modify → serialize, PLAN.md item 13's edit model).
+ *
+ * @remarks
+ * Unlike {@link serializeParsed}, this operates on a bare {@link DicomDataSet}
+ * and has no visibility into whether the parse that produced it completed.
+ * Passing the `dataSet` of a partial or `stopAt`-terminated
+ * {@link ParseResult} silently propagates that truncation into the write model
+ * (and thus into {@link writeFile}) — check `result.ok`/`result.error`/
+ * `result.stoppedAt` before editing if completeness matters.
  *
  * @param parsed - The parsed dataset
  * @param edits - Elements to set (add/replace) and tags to remove
