@@ -6,6 +6,22 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- `serializeParsed` now accepts `{ allowPartial }` and refuses (typed
+  `invalid-argument`) a failed, `stopAt`-terminated, or truncation-warned parse
+  by default, so it can no longer silently emit a truncated file (review W7).
+- `ParseOptions.utf8MislabelPromote` — decode values detected as mislabeled
+  UTF-8 under a single-byte charset as UTF-8; a `utf8-mislabel` warning is
+  emitted regardless (review C4). Exported `isCharsetAffectedVr`.
+- A bare `ISO_IR n` term in a code-extension `SpecificCharacterSet` is
+  normalized to `ISO 2022 IR n` (DCMTK-compatible) with a `nonstandard-charset`
+  warning (review C5).
+- CI now runs the acceptance oracles: the fork-vs-`dicom-parser@1.8.21`
+  differential over the in-repo corpus, and a DCMTK `dcmdump` writer-acceptance
+  job (review B1). Deepened differential comparator; from-model numeric-writer
+  round-trip coverage (review B2/B3/B4).
+
 ## [2.0.0-rc.1] — unreleased
 
 The ground-up TypeScript rewrite. Highlights over `dicom-parser` 1.8.21:
