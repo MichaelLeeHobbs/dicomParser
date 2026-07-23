@@ -16,7 +16,7 @@
  * @module dataSet
  */
 
-import { decodeDicomText, type CharsetContext } from './charset';
+import { decodeDicomText, decodeUtf8, type CharsetContext } from './charset';
 import type { DicomElement } from './element';
 import { toTag, type Tag, type TagLike } from './tag';
 
@@ -39,6 +39,7 @@ export class DicomDataSet {
 
     private lazyView: DataView | undefined;
     private charsetContext: CharsetContext | undefined;
+    private utf8Promoted: ReadonlySet<Tag> | undefined;
 
     constructor(bytes: Uint8Array, littleEndian: boolean, elements: ReadonlyMap<Tag, DicomElement>) {
         this.bytes = bytes;
@@ -58,6 +59,14 @@ export class DicomDataSet {
      */
     applyCharset(context: CharsetContext): void {
         this.charsetContext = context;
+    }
+
+    /**
+     * Marks the tags whose values were detected as mislabeled UTF-8 and should
+     * decode as UTF-8 (parser-assigned when `utf8MislabelPromote` is set).
+     */
+    applyUtf8Promotion(tags: ReadonlySet<Tag>): void {
+        this.utf8Promoted = tags;
     }
 
     /**
@@ -173,6 +182,9 @@ export class DicomDataSet {
             end--;
         }
         const value = this.bytes.subarray(element.dataOffset, end);
+        if (this.utf8Promoted?.has(toTag(tag))) {
+            return decodeUtf8(value);
+        }
         if (this.charsetContext !== undefined) {
             return decodeDicomText(value, this.charsetContext);
         }

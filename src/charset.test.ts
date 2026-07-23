@@ -237,3 +237,36 @@ describe('decodeDicomText — ISO 2022 code extensions', () => {
         expect(decode('ISO 2022 IR 100', 'M\xfcller')).toBe('Müller');
     });
 });
+
+describe('resolveCharsetContext — bare ISO_IR in code extension (review C5)', () => {
+    const BS = String.fromCharCode(92);
+
+    it('aliases a bare ISO_IR term to its ISO 2022 IR form in a multi-valued context', () => {
+        const context = ctx('ISO_IR 100' + BS + 'ISO 2022 IR 87');
+        expect(context.terms).toEqual(['ISO 2022 IR 100', 'ISO 2022 IR 87']);
+        expect(context.aliased).toBe(true);
+    });
+
+    it('decodes the aliased first value and the escaped segment correctly', () => {
+        // 'Müller=' latin-1 then ESC$B 山田 ESC(B under ISO_IR 100\ISO 2022 IR 87
+        expect(decode('ISO_IR 100' + BS + 'ISO 2022 IR 87', 'M\xfcller=\x1b$B;3ED\x1b(B')).toBe('Müller=山田');
+    });
+
+    it('leaves a single-valued ISO_IR term non-2022 and unaliased', () => {
+        expect(ctx('ISO_IR 100').iso2022).toBe(false);
+        expect(ctx('ISO_IR 100').aliased).toBe(false);
+        expect(ctx('ISO_IR 144').iso2022).toBe(false);
+    });
+
+    it('keeps an initial G1 register when a bare term aliases to a register-carrying form', () => {
+        // 'ISO_IR 13' -> 'ISO 2022 IR 13' gives katakana G1 from the start
+        const context = ctx('ISO_IR 13' + BS + 'ISO 2022 IR 87');
+        expect(context.terms[0]).toBe('ISO 2022 IR 13');
+        expect(context.aliased).toBe(true);
+    });
+
+    it('does not alias terms with no ISO 2022 equivalent (multi-valued UTF-8 stays unsupported)', () => {
+        // ISO_IR 192 has no ISO 2022 form; a multi-valued lead keeps the fallback path
+        expect(() => resolveCharsetContext('ISO_IR 999' + BS + 'ISO 2022 IR 87')).toThrow();
+    });
+});

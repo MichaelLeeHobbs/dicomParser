@@ -124,3 +124,17 @@ const STRING_VRS: Readonly<Record<string, boolean | undefined>> = {
 export function isStringVr(vr: string): boolean | undefined {
     return STRING_VRS[vr];
 }
+
+/** The text VRs that SpecificCharacterSet (0008,0005) extends (PS3.5 §6.1.2). */
+const CHARSET_AFFECTED_VRS: ReadonlySet<string> = new Set(['SH', 'LO', 'ST', 'LT', 'UC', 'UT', 'PN']);
+
+/**
+ * Tests whether a VR's text is subject to SpecificCharacterSet decoding — the
+ * VRs eligible for UTF-8 mislabel detection.
+ *
+ * @param vr - The two-character VR code (may be undefined for implicit VR)
+ * @returns `true` for SH/LO/ST/LT/UC/UT/PN, `false` otherwise
+ */
+export function isCharsetAffectedVr(vr: string | undefined): boolean {
+    return vr !== undefined && CHARSET_AFFECTED_VRS.has(vr);
+}

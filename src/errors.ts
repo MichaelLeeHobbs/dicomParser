@@ -71,7 +71,11 @@ export type ParseWarningCode =
     /** A tag appeared more than once at the same level; the last value wins (non-conformant). */
     | 'duplicate-tag'
     /** A defined-length element carried an odd value length (non-conformant; values must be even). */
-    | 'odd-length';
+    | 'odd-length'
+    /** A bare `ISO_IR n` term in a code-extension SpecificCharacterSet was read as its `ISO 2022 IR n` form (non-conformant, DCMTK-compatible). */
+    | 'nonstandard-charset'
+    /** A value under a single-byte charset is probably mislabeled UTF-8 (warned once per tag). */
+    | 'utf8-mislabel';
 
 /** A recoverable anomaly recorded during parsing. */
 export interface ParseWarning {
