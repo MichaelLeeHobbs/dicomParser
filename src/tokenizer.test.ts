@@ -615,3 +615,104 @@ describe('readElements — defined-length encapsulated pixel data (#59/#60)', ()
         expect(stream.warnings.some(w => w.code === 'sequence-fallback')).toBe(true);
     });
 });
+
+describe('readElements — malformed-input containment (adversarial review #1-#7)', () => {
+    const u32 = (n: number): number[] => [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255];
+    const bytesOf = (arr: readonly number[]): number[] => [...arr];
+
+    it('#1: a stray sequence delimiter inside an undefined-length item ends the item; siblings survive', () => {
+        const el = bytesOf([0x08, 0x00, 0x18, 0x00, ...u32(2), 0x41, 0x20]); // (0008,0018) len 2
+        const item = [0xfe, 0xff, 0x00, 0xe0, ...u32(0xffffffff), ...el]; // undefined item, no E00D
+        const sq = [0x08, 0x00, 0x40, 0x11, ...u32(0xffffffff), ...item, 0xfe, 0xff, 0xdd, 0xe0, ...u32(0)];
+        const sib = [0x10, 0x00, 0x10, 0x00, ...u32(4), 0x44, 0x4f, 0x45, 0x20];
+        const result = readElements(streamOf([...sq, ...sib]), { explicitVr: false });
+        expect(result.error).toBeUndefined();
+        expect(result.elements.has(tagFromString('x00100010'))).toBe(true);
+        expect(result.elements.has(0xfffee0dd)).toBe(false);
+        expect(result.elements.has(0xfffee00d)).toBe(false);
+    });
+
+    it('#4: an undefined-length non-sequence element is bounded by its item; it does not eat siblings', () => {
+        const inner = [0x09, 0x00, 0x01, 0x00, ...u32(0xffffffff)]; // (0009,0001) undefined, no delimiter
+        const item = [0xfe, 0xff, 0x00, 0xe0, ...u32(inner.length), ...inner];
+        const sq = [0x08, 0x00, 0x40, 0x11, ...u32(item.length), ...item];
+        const sib = [0x10, 0x00, 0x10, 0x00, ...u32(4), 0x44, 0x4f, 0x45, 0x20];
+        const result = readElements(streamOf([...sq, ...sib]), { explicitVr: false });
+        expect(result.error).toBeUndefined();
+        expect(result.elements.has(tagFromString('x00100010'))).toBe(true);
+    });
+
+    it('#5: an item length overrunning its sequence is clamped, not allowed to swallow siblings', () => {
+        const el = bytesOf([0x08, 0x00, 0x18, 0x00, ...u32(2), 0x41, 0x20]);
+        // item declares 24 but the SQ is only 16 long
+        const item = [0xfe, 0xff, 0x00, 0xe0, ...u32(24), ...el];
+        const sq = [0x08, 0x00, 0x40, 0x11, ...u32(16), ...item.slice(0, 16)];
+        const sib = [0x10, 0x00, 0x10, 0x00, ...u32(4), 0x44, 0x4f, 0x45, 0x20];
+        const result = readElements(streamOf([...sq, ...sib]), { explicitVr: false });
+        expect(result.error).toBeUndefined();
+        expect(result.elements.has(tagFromString('x00100010'))).toBe(true);
+    });
+
+    it('#7: an item delimiter inside a defined-length item is consumed structurally, not surfaced as an element', () => {
+        // defined-length item (16 bytes) containing an element then a stray E00D
+        const el = bytesOf([0x08, 0x00, 0x18, 0x00, ...u32(2), 0x41, 0x20]);
+        const item = [...el, 0xfe, 0xff, 0x0d, 0xe0, ...u32(0)]; // 10 + 8 = 18 -> declare 18
+        const sq = [0x08, 0x00, 0x40, 0x11, ...u32(4 + 18), 0xfe, 0xff, 0x00, 0xe0, ...u32(18), ...item];
+        const result = readElements(streamOf(sq), { explicitVr: false });
+        const element = sq_(result.elements.get(tagFromString('x00081140')));
+        expect(element.items[0]?.dataSet.element('x00080018')).toBeDefined();
+        expect(element.items[0]?.dataSet.element('xfffee00d')).toBeUndefined();
+    });
+
+    it('#2: a defined-length encapsulated basic offset table overrunning the value falls back to opaque', () => {
+        const enc = [0xe0, 0x7f, 0x10, 0x00, 0x4f, 0x42, 0x00, 0x00, ...u32(12), 0xfe, 0xff, 0x00, 0xe0, ...u32(40)];
+        const result = readElements(streamOf(enc), { explicitVr: true, compressedTransferSyntax: true });
+        const element = result.elements.get(tagFromString('x7fe00010'));
+        expect(element?.kind).toBe('value');
+        expect(result.error).toBeUndefined();
+    });
+
+    it('#6: defined-length encapsulated resumes exactly at the value end, with no phantom trailing element', () => {
+        // value = empty BOT + E0DD + 8 padding bytes, declared length 24 (dataOffset 12 -> end 36)
+        const enc = [
+            0xe0,
+            0x7f,
+            0x10,
+            0x00,
+            0x4f,
+            0x42,
+            0x00,
+            0x00,
+            ...u32(24),
+            0xfe,
+            0xff,
+            0x00,
+            0xe0,
+            ...u32(0),
+            0xfe,
+            0xff,
+            0xdd,
+            0xe0,
+            ...u32(0),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+        const sib = [0x10, 0x00, 0x10, 0x00, 0x50, 0x4e, 0x08, 0x00, 0x44, 0x4f, 0x45, 0x5e, 0x4a, 0x4f, 0x48, 0x4e];
+        const result = readElements(streamOf([...enc, ...sib]), { explicitVr: true, compressedTransferSyntax: true });
+        const element = result.elements.get(tagFromString('x7fe00010'));
+        expect(element?.endOffset).toBe(36);
+        expect(result.elements.has(0)).toBe(false);
+        expect(result.elements.has(tagFromString('x00100010'))).toBe(true);
+    });
+});
+
+function sq_(element: unknown): SequenceElement {
+    expect((element as SequenceElement).kind).toBe('sequence');
+    return element as SequenceElement;
+}
