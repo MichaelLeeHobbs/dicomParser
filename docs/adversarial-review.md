@@ -7,7 +7,9 @@ on. The key premise: the same author wrote the code and the tests, so a green
 suite proves only self-consistency — findings were verified against the DICOM
 standard (PS3.5/PS3.10) and DCMTK (`dcmdump`/`dcmconv`) as external oracles.
 
-Legend: **Fixed** (PR merged) · **Documented** (tracked below, not yet fixed).
+Legend: **Fixed** (PR merged) · **Documented** (deliberately not fixed).
+All findings are now either fixed or documented-by-design — see the follow-up
+round below (PRs #20–#23) for the second pass that closed the remaining items.
 
 ## Fixed (high-severity)
 
@@ -79,32 +81,61 @@ Cross-checked against `dcmconv`.
   `undefined`; now routed only when the tag actually lives in meta.
 - **A1/A3/A4/A5/A6** — added to the compat `divergences` doc block.
 
-## Documented (lower-severity / infra — not yet fixed)
+### Follow-up round (fixed 2026-07-23, PRs #20–#23)
 
-These are tracked for follow-up; none is a data-corruption or DoS risk.
+A second design → implement → adversarial-verify pass (three of the four fixes
+delegated to worktree-isolated agents, then verified by four reviewers that
+each reproduced a real gap before merge):
 
-- **W2 semantics** — duplicate tags still collapse to the last value (Map
-  semantics, matching legacy); the warning makes it visible but round-trip of a
-  duplicate-tag file is still lossy. A multimap model would be a larger change.
-- **W7** — `serializeParsed` accepts a partial/`stopAt` parse and silently
-  truncates output; consider requiring `result.ok` or an explicit opt-in.
-- **C4** — `isProbableUtf8Mislabel` / `CharsetContext.singleByte` are exported
-  but unwired (no UTF-8 mislabel promotion in the parse path). Either wire a
-  `utf8MislabelPromote` option or drop the dead surface.
-- **C5** — a multi-valued `ISO_IR 100\ISO 2022 IR 87` (invalid but seen in the
-  wild) degrades to whole-value Latin-1; DCMTK normalizes `ISO_IR xxx` →
-  `ISO 2022 IR xxx`. Aliasing would recover these.
-- **Test infrastructure (B1, highest)** — the 199-file legacy differential, the
-  `dcmdump` writer-acceptance suite, and the benchmark all `skipIf` in CI
-  (hardcoded local corpus / chocolatey paths). CI runs only `test:coverage` on
-  ubuntu, so those acceptance gates never run in CI. Vendoring a small
-  multi-configuration corpus subset + a DCMTK container would close this.
-- **Test depth (B2/B3/B4)** — the differential comparator is shallow (VR only
-  when both define it; leaf offsets only; 6 tag values); the sample corpus is a
-  JPEG2000 monoculture (no implicit/BE/deflated/charset files); and the
-  from-model numeric writers (SS/SL/FL/FD/OD) plus `createJpegBasicOffsetTable`
-  multi-frame loop have thin coverage (the byte-identical round trip copies raw
-  bytes, so it can't exercise from-model number encoding).
+- **W7 (#20)** — `serializeParsed` silently truncated when handed a partial or
+  `stopAt` parse. Now refuses (typed `invalid-argument`) unless
+  `{ allowPartial: true }`. The verify pass found the first cut missed
+  warning-only truncation (a value clamped at EOF, `ok=true`); the guard now
+  also refuses `unexpected-eof` / `missing-item-delimiter` /
+  `missing-sequence-delimiter` / `length-adjusted` while letting benign
+  `duplicate-tag` / `odd-length` through.
+- **C4 (#23)** — the `isProbableUtf8Mislabel` / `singleByte` surface is wired:
+  parse-time detection over charset-affected VRs under single-byte contexts,
+  one `utf8-mislabel` warning per tag, opt-in `utf8MislabelPromote` consulted by
+  the lazy decoder via a per-dataset promoted set. Detection is always-on,
+  promotion off by default. Known limitation (documented in the option's
+  TSDoc): the heuristic is ambiguous for short all-caps single-byte values
+  (e.g. Cyrillic `ЮГ` is also valid UTF-8) — kept the proven dcmtk.js heuristic
+  rather than a length floor that would miss legitimately short mislabeled
+  names; promotion opt-in means the default cost is only an advisory warning.
+- **C5 (#23)** — a bare `ISO_IR n` in a code-extension value is normalized to
+  `ISO 2022 IR n` (DCMTK behavior, PS3.5 C.12.1.1.2), membership-gated so
+  single-valued terms are untouched; a `nonstandard-charset` warning (deduped
+  per value) records it.
+- **B1 (#22)** — the acceptance oracles now run in CI: the fork-vs-`1.8.21`
+  differential runs against the in-repo `testImages/` in the default job, and a
+  new `acceptance` job apt-installs DCMTK and runs the `dcmdump` writer gate
+  with `REQUIRE_DCMTK=1` (a missing binary fails red, not green-by-skip). Paths
+  are env-configurable (`DCMDUMP`, `DICOM_DIFF_CORPUS`); the 198-file external
+  corpus stays a local deep gate.
+- **B2/B3 (#22)** — the differential comparator is deepened (iterative;
+  recurses items, compares fragment offset/position/length, the full basic
+  offset table, VR wherever legacy defines it, and leaf value bytes) and now
+  runs against the diverse in-repo corpus (BE/implicit/deflated/encapsulated).
+  Verify pass caught deflated files getting smoke-only coverage (legacy needs a
+  Buffer, not a Uint8Array); they now deep-compare at the value-accessor level
+  (legacy's A3 preamble re-parse precludes a tag-for-tag compare there).
+- **B4 (#21)** — from-model numeric writers (SS/SL/FL/FD/OD/OF/OW/OL/OB/AT/
+  SV/UV, explicit and implicit) now have byte-exact round-trip tests (the
+  byte-identical corpus round-trip copies raw bytes, so it never exercised
+  them), plus `createJpegBasicOffsetTable` multi-frame and implicit
+  `scanUnknown`-via-`vrLookup` coverage. Coverage rose to 96.5/94.2/98.0/96.6.
+
+## Documented (deliberately not fixed)
+
+- **W2 semantics** — duplicate tags collapse to the last value (Map semantics,
+  matching legacy `dicom-parser`, which the compat façade must mirror). The
+  `duplicate-tag` warning makes it visible; round-trip of a duplicate-tag file
+  is still lossy. A multimap model would break the v1 one-element-per-tag
+  contract (and the 198-file differential) for a non-conformant edge case, so
+  this is left as-is by design. A strict-reject option could be added on request.
+- **C4 heuristic** — see above; the short-value UTF-8/single-byte ambiguity is
+  inherent and documented rather than papered over.
 
 ## Reproduction
 

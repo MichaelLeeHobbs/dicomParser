@@ -33,11 +33,15 @@ publish (unavoidable; self-corrects at `2.0.0` final).
 
 **Adversarial review (2026-07-23)**: a five-reviewer adversarial pass found and fixed a set of
 real bugs before rc.1 — writer length-field corruption (PR #14), tokenizer silent data-loss on
-malformed input (PR #15), an uncatchable OOM amplification vector (PR #16), and ISO 2022 charset
-mojibake (PR #17). Full findings, severities, and the documented lower-severity/infra follow-ups
-(notably: CI does not run the differential/dcmdump/benchmark acceptance gates — they `skipIf`) are
-in [docs/adversarial-review.md](docs/adversarial-review.md). Address the §9 CI-gate item before
-2.0.0 final.
+malformed input (PR #15), an uncatchable OOM amplification vector (PR #16), ISO 2022 charset
+mojibake (PR #17), and diagnostics/compat (PR #18). A follow-up round (PRs #20–#23), designed and
+verified by two more agent workflows, closed the remaining items: `serializeParsed` partial-parse
+guard (W7), UTF-8 mislabel wiring + code-extension `ISO_IR` aliasing (C4/C5), the acceptance gates
+now **run in CI** (in-repo differential in the default job + a DCMTK `acceptance` job — closing the
+former `skipIf` gap, B1), a deepened differential comparator over a diverse in-repo corpus (B2/B3),
+and byte-exact from-model numeric-writer coverage (B4). All findings are now fixed or
+documented-by-design (W2 stays last-wins to preserve the v1 compat contract). Full report:
+[docs/adversarial-review.md](docs/adversarial-review.md).
 
 ## 1. Mission
 
@@ -209,12 +213,12 @@ off here as they land.
 - [x] Coverage ≥ 95/90/95/95 with the full ported upstream suite + new fixture suites
 - [x] Fuzz suite (fast-check + corpus mutation) in CI — crash/hang/OOM = fail
 - [x] Bulk-parse benchmark vs recorded baseline (docs/benchmark.md; ~17% faster than 1.8.21) — comparative gate local (`pnpm run bench`), absolute budget in CI
-- [x] Round-trip gates: byte-identical re-serialization corpus (CI) + DCMTK accepts writer output (local dcmdump suite, auto-skips in CI)
+- [x] Round-trip gates: byte-identical re-serialization corpus (CI) + DCMTK accepts writer output (now a CI `acceptance` job that apt-installs DCMTK and runs the dcmdump gate under `REQUIRE_DCMTK=1`, PR #22) + fork-vs-1.8.21 differential over the in-repo corpus in the default CI job
 - [ ] Browser smoke suite (Vitest browser mode) — parse + DecompressionStream path
 
 **Release engineering**
 
-- [ ] npm Trusted Publishing configured (repo + publish.yml) — no tokens anywhere
+- [x] npm Trusted Publishing configured (repo + publish.yml) — no tokens anywhere (done 2026-07-23; tag push withheld pending explicit go-ahead)
 - [ ] Provenance badge visible on npm after first CI-driven publish
 - [ ] `latest` dist-tag correct after 2.0.0 final (overwrites the forced alpha `latest`)
 - [ ] Version lineage documented: 2.x here vs upstream 1.x; deprecation guidance for
