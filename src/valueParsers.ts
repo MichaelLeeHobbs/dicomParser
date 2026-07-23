@@ -62,6 +62,11 @@ export function parseDA(date: string | undefined, validate = false): DicomDate |
         }
         return undefined;
     }
+    // validate=true must reject digit-prefixed garbage ('2023011!' → not {2023,1,1});
+    // Number.parseInt alone stops at the first non-digit and silently accepts it.
+    if (validate && !/^\d{8}$/.test(date)) {
+        throw new DicomError('invalid-argument', `parseDA: invalid DA '${date}'`);
+    }
     const year = Number.parseInt(date.substring(0, 4), 10);
     const month = Number.parseInt(date.substring(4, 6), 10);
     const day = Number.parseInt(date.substring(6, 8), 10);
@@ -71,12 +76,20 @@ export function parseDA(date: string | undefined, validate = false): DicomDate |
     return { year, month, day };
 }
 
+/** DICOM TM structural form: HH, HHMM, HHMMSS, or HHMMSS.F(1-6 digits). */
+const TM_PATTERN = /^\d{2}(\d{2}(\d{2}(\.\d{1,6})?)?)?$/;
+
 /** `true` when the component is absent or a number in `[0, max]` (NaN fails). */
 function componentInRange(value: number | undefined, max: number): boolean {
     return value === undefined || (value >= 0 && value <= max);
 }
 
 function validateTM(time: string, parsed: DicomTime): void {
+    // reject digit-prefixed garbage ('120000.5x', '12345678', '1x') that
+    // Number.parseInt would otherwise accept or, worse, mis-scale the fraction
+    if (!TM_PATTERN.test(time)) {
+        throw new DicomError('invalid-argument', `parseTM: invalid TM '${time}'`);
+    }
     const valid =
         componentInRange(parsed.hours, 23) &&
         componentInRange(parsed.minutes, 59) &&

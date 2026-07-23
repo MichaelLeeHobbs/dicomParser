@@ -66,6 +66,14 @@ describe('parseTM', () => {
         expect(() => parseTM('xx', true)).toThrow(DicomError);
     });
 
+    it('rejects digit-prefixed garbage when validating (review C3)', () => {
+        expect(() => parseDA('2023011!', true)).toThrow(DicomError);
+        expect(() => parseDA('2023 101', true)).toThrow(DicomError);
+        expect(() => parseTM('1x', true)).toThrow(DicomError);
+        expect(() => parseTM('120000.5x', true)).toThrow(DicomError);
+        expect(() => parseTM('12345678', true)).toThrow(DicomError);
+    });
+
     it('accepts valid times when validating', () => {
         expect(parseTM('235959.999999', true)).toEqual({ hours: 23, minutes: 59, seconds: 59, fractionalSeconds: 999999 });
     });

@@ -28,6 +28,8 @@ type SegmentDecoder =
     | { readonly kind: 'label'; readonly label: string }
     /** JIS X 0208 two-byte GL codes: re-wrapped with its ISO 2022 escape and decoded as iso-2022-jp. */
     | { readonly kind: 'iso2022jp'; readonly escape: readonly number[] }
+    /** JIS X 0212 two-byte GL codes: framed as euc-jp SS3 (0x8F + GR pair) — WHATWG iso-2022-jp does not support it. */
+    | { readonly kind: 'jis0212' }
     /** JIS X 0201 katakana (GR single-byte, 0xA1-0xDF): decoded as shift_jis. */
     | { readonly kind: 'katakana' };
 
@@ -87,30 +89,51 @@ const ISO2022_INITIAL: Readonly<Record<string, SegmentDecoder>> = {
     'ISO 2022 IR 203': label('iso-8859-15'),
 };
 
+/** Which code element (invoked by GL or GR bytes) an escape designates. */
+type Register = 'g0' | 'g1';
+
+/** An ISO 2022 designation: the target register and the decoder for it. */
+interface Designation {
+    readonly register: Register;
+    readonly decoder: SegmentDecoder;
+}
+
 /**
- * ISO 2022 escape sequences (bytes after ESC, as a string key) → decoder
- * for the following run. Per DICOM PS3.5 Table 6.3-1.
+ * ISO 2022 escape sequences (bytes after ESC, as a string key) → the register
+ * they designate and its decoder. Per DICOM PS3.5 Table 6.3-1. G0 is invoked
+ * by GL bytes (0x21-0x7E), G1 by GR bytes (0xA0-0xFF).
  */
-const ESCAPE_DECODERS: Readonly<Record<string, SegmentDecoder>> = {
-    '(B': LATIN1, // G0 = ASCII
-    '(J': LATIN1, // G0 = JIS X 0201 romaji
-    ')I': { kind: 'katakana' }, // G1 = JIS X 0201 katakana
-    '$@': { kind: 'iso2022jp', escape: [0x1b, 0x24, 0x40] }, // G0 = JIS X 0208-1978
-    $B: { kind: 'iso2022jp', escape: [0x1b, 0x24, 0x42] }, // G0 = JIS X 0208
-    '$(D': { kind: 'iso2022jp', escape: [0x1b, 0x24, 0x28, 0x44] }, // G0 = JIS X 0212
-    '$)C': label('euc-kr'), // G1 = KS X 1001
-    '$)A': label('gbk'), // G1 = GB 2312
-    '-A': LATIN1, // G1 = ISO-8859-1
-    '-B': label('iso-8859-2'),
-    '-C': label('iso-8859-3'),
-    '-D': label('iso-8859-4'),
-    '-F': label('iso-8859-7'),
-    '-G': label('iso-8859-6'),
-    '-H': label('iso-8859-8'),
-    '-L': label('iso-8859-5'),
-    '-M': label('iso-8859-9'),
-    '-T': label('windows-874'),
-    '-b': label('iso-8859-15'),
+const ESCAPE_DECODERS: Readonly<Record<string, Designation>> = {
+    '(B': { register: 'g0', decoder: LATIN1 }, // G0 = ASCII
+    '(J': { register: 'g0', decoder: LATIN1 }, // G0 = JIS X 0201 romaji
+    ')I': { register: 'g1', decoder: { kind: 'katakana' } }, // G1 = JIS X 0201 katakana
+    '$@': { register: 'g0', decoder: { kind: 'iso2022jp', escape: [0x1b, 0x24, 0x40] } }, // G0 = JIS X 0208-1978
+    $B: { register: 'g0', decoder: { kind: 'iso2022jp', escape: [0x1b, 0x24, 0x42] } }, // G0 = JIS X 0208
+    '$(D': { register: 'g0', decoder: { kind: 'jis0212' } }, // G0 = JIS X 0212
+    '$)C': { register: 'g1', decoder: label('euc-kr') }, // G1 = KS X 1001
+    '$)A': { register: 'g1', decoder: label('gbk') }, // G1 = GB 2312
+    '-A': { register: 'g1', decoder: LATIN1 }, // G1 = ISO-8859-1
+    '-B': { register: 'g1', decoder: label('iso-8859-2') },
+    '-C': { register: 'g1', decoder: label('iso-8859-3') },
+    '-D': { register: 'g1', decoder: label('iso-8859-4') },
+    '-F': { register: 'g1', decoder: label('iso-8859-7') },
+    '-G': { register: 'g1', decoder: label('iso-8859-6') },
+    '-H': { register: 'g1', decoder: label('iso-8859-8') },
+    '-L': { register: 'g1', decoder: label('iso-8859-5') },
+    '-M': { register: 'g1', decoder: label('iso-8859-9') },
+    '-T': { register: 'g1', decoder: label('windows-874') },
+    '-b': { register: 'g1', decoder: label('iso-8859-15') },
+};
+
+/**
+ * Initial G0/G1 decoders for an ISO 2022 term (before any escape). Most terms
+ * start with G0 = ASCII and designate G1 via an escape in the data; the
+ * exceptions carry an active G1 (or a non-ASCII G0) from the start.
+ */
+const ISO2022_REGISTERS: Readonly<Record<string, { readonly g0: SegmentDecoder; readonly g1: SegmentDecoder | undefined }>> = {
+    'ISO 2022 IR 13': { g0: LATIN1, g1: { kind: 'katakana' } }, // JIS X 0201: G0 romaji, G1 katakana (active from the start)
+    'ISO 2022 IR 149': { g0: LATIN1, g1: label('euc-kr') },
+    'ISO 2022 IR 58': { g0: LATIN1, g1: label('gbk') },
 };
 
 /** Aliases accepted for assume/fallback options (lowercased) → DICOM defined term. */
@@ -185,6 +208,30 @@ export function decodeLatin1(bytes: Uint8Array): string {
     return result;
 }
 
+/** Decodes via a cached TextDecoder for `label`, falling back to Latin-1. */
+function decodeVia(label: string, bytes: Uint8Array): string {
+    const textDecoder = getTextDecoder(label);
+    /* v8 ignore next -- charset labels are validated by resolveCharsetContext / always available with ICU */
+    return textDecoder === undefined ? decodeLatin1(bytes) : textDecoder.decode(bytes);
+}
+
+/** Decodes a JIS X 0208 GL run by re-wrapping it in its ISO 2022 escape and decoding as iso-2022-jp. */
+function decodeIso2022Jp(escape: readonly number[], bytes: Uint8Array): string {
+    const wrapped = new Uint8Array(escape.length + bytes.length);
+    wrapped.set(escape, 0);
+    wrapped.set(bytes, escape.length);
+    return decodeVia('iso-2022-jp', wrapped);
+}
+
+/** Decodes a JIS X 0212 GL run by framing each GL pair as euc-jp SS3 (WHATWG iso-2022-jp lacks 0212). */
+function decodeJisX0212(bytes: Uint8Array): string {
+    const framed: number[] = [];
+    for (let i = 0; i + 1 < bytes.length; i += 2) {
+        framed.push(0x8f, (bytes[i] as number) | 0x80, (bytes[i + 1] as number) | 0x80);
+    }
+    return decodeVia('euc-jp', Uint8Array.from(framed));
+}
+
 /** Decodes a single run of bytes with the given segment decoder. */
 function decodeSegment(bytes: Uint8Array, decoder: SegmentDecoder): string {
     if (bytes.length === 0) {
@@ -193,27 +240,14 @@ function decodeSegment(bytes: Uint8Array, decoder: SegmentDecoder): string {
     switch (decoder.kind) {
         case 'latin1':
             return decodeLatin1(bytes);
-        case 'label': {
-            const textDecoder = getTextDecoder(decoder.label);
-            /* v8 ignore next -- labels in the tables are validated by resolveCharsetContext */
-            return textDecoder === undefined ? decodeLatin1(bytes) : textDecoder.decode(bytes);
-        }
-        case 'iso2022jp': {
-            const textDecoder = getTextDecoder('iso-2022-jp');
-            /* v8 ignore next -- iso-2022-jp is always available with ICU */
-            if (textDecoder === undefined) {
-                return decodeLatin1(bytes);
-            }
-            const wrapped = new Uint8Array(decoder.escape.length + bytes.length);
-            wrapped.set(decoder.escape, 0);
-            wrapped.set(bytes, decoder.escape.length);
-            return textDecoder.decode(wrapped);
-        }
-        case 'katakana': {
-            const textDecoder = getTextDecoder('shift_jis');
-            /* v8 ignore next -- shift_jis is always available with ICU */
-            return textDecoder === undefined ? decodeLatin1(bytes) : textDecoder.decode(bytes);
-        }
+        case 'label':
+            return decodeVia(decoder.label, bytes);
+        case 'iso2022jp':
+            return decodeIso2022Jp(decoder.escape, bytes);
+        case 'jis0212':
+            return decodeJisX0212(bytes);
+        case 'katakana':
+            return decodeVia('shift_jis', bytes);
     }
 }
 
@@ -238,13 +272,35 @@ function readEscape(bytes: Uint8Array, start: number): EscapeMatch {
 }
 
 /**
- * Decodes a byte run containing ISO 2022 escape sequences. Each escape
- * switches the decoder for the following segment; unrecognized escapes
- * leave the current decoder active.
+ * Decodes an inter-escape run, routing GL bytes (0x00-0x7F) through the G0
+ * decoder and GR bytes (0x80-0xFF) through G1. This separation is what lets a
+ * G0 escape (e.g. ESC ( J) leave an active G1 designation (e.g. katakana)
+ * intact for the GR bytes in the same run.
  */
-function decodeIso2022(bytes: Uint8Array, initial: SegmentDecoder): string {
+function decodeMixed(bytes: Uint8Array, g0: SegmentDecoder, g1: SegmentDecoder | undefined): string {
     let out = '';
-    let current = initial;
+    let runStart = 0;
+    let runIsGr = bytes.length > 0 && (bytes[0] as number) >= 0x80;
+    for (let i = 0; i <= bytes.length; i++) {
+        const isGr = i < bytes.length && (bytes[i] as number) >= 0x80;
+        if (i === bytes.length || isGr !== runIsGr) {
+            out += decodeSegment(bytes.subarray(runStart, i), runIsGr ? (g1 ?? LATIN1) : g0);
+            runStart = i;
+            runIsGr = isGr;
+        }
+    }
+    return out;
+}
+
+/**
+ * Decodes a byte run containing ISO 2022 escape sequences. Escapes designate a
+ * decoder into the G0 or G1 register; data bytes are then routed by their range
+ * (GL→G0, GR→G1). Unrecognized escapes leave both registers unchanged.
+ */
+function decodeIso2022(bytes: Uint8Array, initialG0: SegmentDecoder, initialG1: SegmentDecoder | undefined): string {
+    let out = '';
+    let g0 = initialG0;
+    let g1 = initialG1;
     let segStart = 0;
     let i = 0;
     while (i < bytes.length) {
@@ -252,13 +308,20 @@ function decodeIso2022(bytes: Uint8Array, initial: SegmentDecoder): string {
             i++;
             continue;
         }
-        out += decodeSegment(bytes.subarray(segStart, i), current);
+        out += decodeMixed(bytes.subarray(segStart, i), g0, g1);
         const esc = readEscape(bytes, i);
-        current = ESCAPE_DECODERS[esc.key] ?? current;
+        const designation = ESCAPE_DECODERS[esc.key];
+        if (designation !== undefined) {
+            if (designation.register === 'g0') {
+                g0 = designation.decoder;
+            } else {
+                g1 = designation.decoder;
+            }
+        }
         i += esc.length;
         segStart = i;
     }
-    out += decodeSegment(bytes.subarray(segStart), current);
+    out += decodeMixed(bytes.subarray(segStart), g0, g1);
     return out;
 }
 
@@ -268,17 +331,19 @@ export interface CharsetContext {
     readonly terms: readonly string[];
     /** Whether ISO 2022 escape processing applies. */
     readonly iso2022: boolean;
-    /** Decoder for non-2022 charsets, or the initial decoder for ISO 2022. */
+    /** Decoder for non-2022 charsets, or the initial G0 decoder for ISO 2022. */
     readonly initial: SegmentDecoder;
+    /** Initial G1 (GR) decoder for ISO 2022, when the term carries one from the start. */
+    readonly initialG1: SegmentDecoder | undefined;
     /** Whether the context is a single-byte repertoire (UTF-8 mislabel detection applies). */
     readonly singleByte: boolean;
 }
 
 /** The default context (ISO_IR 6 / ASCII). */
-export const DEFAULT_CHARSET_CONTEXT: CharsetContext = { terms: ['ISO_IR 6'], iso2022: false, initial: LATIN1, singleByte: true };
+export const DEFAULT_CHARSET_CONTEXT: CharsetContext = { terms: ['ISO_IR 6'], iso2022: false, initial: LATIN1, initialG1: undefined, singleByte: true };
 
 /** The Latin-1 context used as the lenient last-resort fallback. */
-export const LATIN1_CHARSET_CONTEXT: CharsetContext = { terms: ['ISO_IR 100'], iso2022: false, initial: LATIN1, singleByte: true };
+export const LATIN1_CHARSET_CONTEXT: CharsetContext = { terms: ['ISO_IR 100'], iso2022: false, initial: LATIN1, initialG1: undefined, singleByte: true };
 
 /**
  * Normalizes a user-supplied charset name (alias or defined term) to a DICOM
@@ -295,11 +360,24 @@ export function normalizeCharsetName(input: string): string | undefined {
 function buildContext(terms: readonly string[]): CharsetContext | undefined {
     const iso2022 = terms.length > 1 || terms.some(t => t.startsWith('ISO 2022'));
     const first = terms[0] ?? 'ISO_IR 6';
-    const initial = iso2022 ? ISO2022_INITIAL[first] : CHARSET_DECODERS[first];
+    if (!iso2022) {
+        const initial = CHARSET_DECODERS[first];
+        if (initial === undefined) {
+            return undefined;
+        }
+        return { terms, iso2022, initial, initialG1: undefined, singleByte: isSingleByteDecoder(initial) };
+    }
+    const registers = ISO2022_REGISTERS[first];
+    if (registers !== undefined) {
+        return { terms, iso2022, initial: registers.g0, initialG1: registers.g1, singleByte: false };
+    }
+    // default: a single decoder that covers both GL (ASCII) and GR (its set),
+    // used as both G0 and G1 — the split is a no-op unless an escape changes one
+    const initial = ISO2022_INITIAL[first];
     if (initial === undefined) {
         return undefined;
     }
-    return { terms, iso2022, initial, singleByte: !iso2022 && isSingleByteDecoder(initial) };
+    return { terms, iso2022, initial, initialG1: initial, singleByte: false };
 }
 
 /** Parses raw SpecificCharacterSet values into normalized terms. An empty first value means the default repertoire. */
@@ -362,7 +440,7 @@ export function resolveCharsetContext(specificCharacterSet: string | undefined, 
  */
 export function decodeDicomText(bytes: Uint8Array, context: CharsetContext): string {
     if (context.iso2022) {
-        return decodeIso2022(bytes, context.initial);
+        return decodeIso2022(bytes, context.initial, context.initialG1);
     }
     return decodeSegment(bytes, context.initial);
 }
