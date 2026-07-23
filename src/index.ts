@@ -35,3 +35,16 @@ export type { DicomElement, ElementBase, EncapsulatedElement, Fragment, Sequence
 export { DicomDataSet } from './dataSet';
 export { scanEncapsulatedPixelData } from './encapsulated';
 export { readElements, type ReadElementsOptions, type ReadElementsResult, type StopAtOption } from './tokenizer';
+export { readPart10Header, readUiString, type Part10Header, type Part10Options } from './part10';
+export { inflateRaw, inflateRawAsync, hasSyncInflate, type InflateFn } from './inflate';
+export {
+    parse,
+    parseAsync,
+    TS_DEFLATED_LE,
+    TS_EXPLICIT_BE,
+    TS_EXPLICIT_LE,
+    TS_GE_PRIVATE_DLX,
+    TS_IMPLICIT_LE,
+    type ParseOptions,
+    type ParseResult,
+} from './parse';
