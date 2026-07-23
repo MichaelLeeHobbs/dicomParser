@@ -59,7 +59,9 @@ export type ParseWarningCode =
     /** End of input reached in the middle of a structure. */
     | 'unexpected-eof'
     /** A declared length was inconsistent and was adjusted. */
-    | 'length-adjusted';
+    | 'length-adjusted'
+    /** The `DICM` prefix was found at offset 0 (no 128-byte preamble). */
+    | 'missing-preamble';
 
 /** A recoverable anomaly recorded during parsing. */
 export interface ParseWarning {
