@@ -61,3 +61,11 @@ export {
     type CharsetContext,
     type CharsetOptions,
 } from './charset';
+export {
+    createJpegBasicOffsetTable,
+    nativePixelDataView,
+    readEncapsulatedImageFrame,
+    readEncapsulatedPixelDataFromFragments,
+    type PixelDataView,
+} from './pixelData';
+export { DEFAULT_MAX_INFLATED_BYTES, type InflateOptions } from './inflate';

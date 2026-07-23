@@ -161,7 +161,7 @@ describe('inflateRaw / inflateRawAsync', () => {
 
     it('prefers an injected inflater', () => {
         const inflate = vi.fn(() => payload);
-        expect(inflateRaw(deflated, inflate)).toBe(payload);
+        expect(inflateRaw(deflated, { inflate })).toBe(payload);
         expect(inflate).toHaveBeenCalledOnce();
     });
 

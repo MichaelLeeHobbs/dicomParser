@@ -45,6 +45,8 @@ export interface ParseOptions {
     readonly inflate?: InflateFn;
     /** Charset handling for string decoding (#146): assume/fallback names. */
     readonly charset?: CharsetOptions;
+    /** Maximum inflated size in bytes for deflated files (default 1 GiB). */
+    readonly maxInflatedBytes?: number;
 }
 
 /** Result of {@link parse}/{@link parseAsync}: always populated. */
@@ -211,7 +213,10 @@ export function parse(bytes: Uint8Array, options: ParseOptions = {}): ParseResul
     let dataBytes = bytes;
     if (plan.deflated) {
         try {
-            const inflated = inflateRaw(bytes.subarray(plan.header.dataSetPosition), options.inflate);
+            const inflated = inflateRaw(bytes.subarray(plan.header.dataSetPosition), {
+                ...(options.inflate === undefined ? {} : { inflate: options.inflate }),
+                ...(options.maxInflatedBytes === undefined ? {} : { maxInflatedBytes: options.maxInflatedBytes }),
+            });
             dataBytes = spliceInflated(bytes, plan.header.dataSetPosition, inflated);
         } catch (thrown) {
             if (!(thrown instanceof DicomError)) {
@@ -240,7 +245,10 @@ export async function parseAsync(bytes: Uint8Array, options: ParseOptions = {}):
     let dataBytes = bytes;
     if (plan.deflated) {
         try {
-            const inflated = await inflateRawAsync(bytes.subarray(plan.header.dataSetPosition), options.inflate);
+            const inflated = await inflateRawAsync(bytes.subarray(plan.header.dataSetPosition), {
+                ...(options.inflate === undefined ? {} : { inflate: options.inflate }),
+                ...(options.maxInflatedBytes === undefined ? {} : { maxInflatedBytes: options.maxInflatedBytes }),
+            });
             dataBytes = spliceInflated(bytes, plan.header.dataSetPosition, inflated);
         } catch (thrown) {
             if (!(thrown instanceof DicomError)) {
