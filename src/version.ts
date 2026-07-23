@@ -5,4 +5,4 @@
  */
 
 /** The published package version. */
-export const VERSION = '2.0.0-alpha.0';
+export const VERSION = '2.0.0-rc.1';
