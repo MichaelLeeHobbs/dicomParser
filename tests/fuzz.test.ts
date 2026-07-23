@@ -193,13 +193,11 @@ describe('resource limits (adversarial review S1/S2/S3)', () => {
         expect(DEFAULT_MAX_INFLATED_BYTES).toBe(256 * 1024 * 1024);
     });
 
-    it('an oversized maxInflatedBytes that overflows the splice surfaces as a DicomError, not RangeError', () => {
-        // build a small deflated file, then request an absurd cap; the guard on the
-        // splice allocation should convert any RangeError into a DicomError.
+    it('a deflated file parses under a large but valid cap (the splice guard is a latent-overflow backstop)', () => {
+        // the S3 guard only fires on an actual >2 GiB allocation, which we cannot
+        // materialize in a test; assert the happy path with a large valid cap
         const small = p10Deflated([explicitEl('00080060', 'CS', latin1('CT'))]);
-        // this parses fine; the splice guard only triggers on an actual oversized allocation,
-        // which we cannot materialize in a test — assert the happy path still works with a huge cap
-        const result = parse(small, { maxInflatedBytes: Number.MAX_SAFE_INTEGER });
+        const result = parse(small, { maxInflatedBytes: 512 * 1024 * 1024 });
         expect(result.ok).toBe(true);
     });
 });
