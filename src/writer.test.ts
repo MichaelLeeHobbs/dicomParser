@@ -7,6 +7,7 @@ import { encodeDataSet } from './writer';
 import { buildMetaGroup, modifyDataSet, serializeParsed, writeFile } from './writeFile';
 import { dataSet, element, encodeBigintValue, encodeNumericValue, encodeStringValue, item, toWriteModel } from './writeModel';
 import type { EncapsulatedElement, SequenceElement } from './element';
+import { concat, explicitEl, latin1 } from '../tests/helpers/p10';
 
 describe('encodeStringValue', () => {
     it('pads to even length: space for text, NUL for UI', () => {
@@ -378,5 +379,30 @@ describe('serializeParsed — completeness guard (review W7)', () => {
         const result = parse(bytes);
         expect(() => serializeParsed(result, { allowPartial: true })).toThrow(DicomError);
         expect(() => serializeParsed(result, { allowPartial: true })).toThrow(/read-only/);
+    });
+});
+
+describe('serializeParsed — truncation-warning guard (review verify)', () => {
+    it('refuses a value silently clamped at EOF (unexpected-eof warning, ok=true)', () => {
+        // OW element declaring 8 value bytes, then cut the file by 2 bytes so the
+        // tokenizer clamps the value 8->6 with an unexpected-eof warning (ok stays true)
+        const full = writeFile({ dataSet: dataSet([element('00080060', 'CS', 'CT'), element('7FE00010', 'OW', new Uint8Array(8))]) });
+        const truncated = full.subarray(0, full.length - 2);
+        const parsed = parse(truncated);
+        expect(parsed.ok).toBe(true);
+        expect(parsed.error).toBeUndefined();
+        expect(parsed.stoppedAt).toBeUndefined();
+        expect(parsed.warnings.some(w => w.code === 'unexpected-eof')).toBe(true);
+        expect(() => serializeParsed(parsed)).toThrow(/adjusted or truncated/);
+        // allowPartial lets it through
+        expect(() => serializeParsed(parsed, { allowPartial: true })).not.toThrow();
+    });
+
+    it('still serializes a benign-warning parse (duplicate-tag) without allowPartial', () => {
+        // craft a raw dataset with a duplicate tag (warns, but complete)
+        const dup = concat([explicitEl('00080060', 'CS', latin1('CT')), explicitEl('00080060', 'CS', latin1('MR'))]);
+        const parsed = parse(dup, { transferSyntax: TS_EXPLICIT_LE });
+        expect(parsed.warnings.some(w => w.code === 'duplicate-tag')).toBe(true);
+        expect(() => serializeParsed(parsed)).not.toThrow();
     });
 });

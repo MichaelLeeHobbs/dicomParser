@@ -154,6 +154,25 @@ export interface SerializeParsedOptions {
  * @param result - The offending parse result
  * @returns The `invalid-argument` {@link DicomError} to throw
  */
+/**
+ * Warning codes that mean the parsed model does not faithfully represent
+ * complete input — a value was clamped at EOF, a delimiter was missing, or a
+ * length was adjusted. Re-serializing such a parse silently emits a file that
+ * differs from the source, so the guard refuses it too (not just hard failures
+ * and `stopAt`). Benign non-conformance (duplicate-tag, odd-length) is excluded.
+ */
+const INCOMPLETE_WARNING_CODES: ReadonlySet<string> = new Set(['unexpected-eof', 'missing-item-delimiter', 'missing-sequence-delimiter', 'length-adjusted']);
+
+/** The first truncation/incompleteness warning on a result, if any. */
+function incompleteWarning(result: ParseResult): string | undefined {
+    return result.warnings.find(w => INCOMPLETE_WARNING_CODES.has(w.code))?.code;
+}
+
+/** Whether a parse fully and faithfully represents its input (safe to re-serialize). */
+function isComplete(result: ParseResult): boolean {
+    return result.ok && result.error === undefined && result.stoppedAt === undefined && incompleteWarning(result) === undefined;
+}
+
 function guardError(result: ParseResult): DicomError {
     if (result.error !== undefined) {
         return new DicomError(
@@ -162,9 +181,15 @@ function guardError(result: ParseResult): DicomError {
             { cause: result.error, ...(result.error.offset === undefined ? {} : { offset: result.error.offset }) }
         );
     }
+    if (result.stoppedAt !== undefined) {
+        return new DicomError(
+            'invalid-argument',
+            `refusing to serialize a parse stopped early at ${tagToString(result.stoppedAt)} (stopAt); pass { allowPartial: true } to serialize the truncated dataset`
+        );
+    }
     return new DicomError(
         'invalid-argument',
-        `refusing to serialize a parse stopped early at ${tagToString(result.stoppedAt as number)} (stopAt); pass { allowPartial: true } to serialize the truncated dataset`
+        `refusing to serialize a parse that adjusted or truncated its input ('${String(incompleteWarning(result))}'); pass { allowPartial: true } to serialize it anyway`
     );
 }
 
@@ -176,12 +201,13 @@ function guardError(result: ParseResult): DicomError {
  * (the round-trip gate); deflated files re-compress (parse-equal, not
  * byte-equal). Explicit big endian is read-only and raises `unsupported`.
  *
- * By default an incomplete parse — one that failed (`error`) or was halted by
- * `stopAt` (`stoppedAt`) — is refused, because a truncated Part-10 file is
- * still structurally valid DICOM up to the cut and would be read without
- * complaint. Pass `{ allowPartial: true }` to deliberately serialize the
- * partial dataset. Warnings-only parses (`ok`, no error/stop) serialize
- * normally.
+ * By default an incomplete parse is refused: one that failed (`error`), was
+ * halted by `stopAt` (`stoppedAt`), or carries a truncation/adjustment warning
+ * (`unexpected-eof`, `missing-item-delimiter`, `missing-sequence-delimiter`,
+ * `length-adjusted`) — because the re-serialized file would silently differ
+ * from the source yet still read as valid DICOM. Pass `{ allowPartial: true }`
+ * to serialize anyway. Benign warnings (`duplicate-tag`, `odd-length`, …) do
+ * not block serialization.
  *
  * @param result - A successful parse result (or partial, with `allowPartial`)
  * @param options - Serialization options; see {@link SerializeParsedOptions}
@@ -193,7 +219,7 @@ function guardError(result: ParseResult): DicomError {
  *         `allowPartial`)
  */
 export function serializeParsed(result: ParseResult, options: SerializeParsedOptions = {}): Uint8Array {
-    if (options.allowPartial !== true && (!result.ok || result.error !== undefined || result.stoppedAt !== undefined)) {
+    if (options.allowPartial !== true && !isComplete(result)) {
         throw guardError(result);
     }
     if (result.transferSyntax === TS_EXPLICIT_BE) {
