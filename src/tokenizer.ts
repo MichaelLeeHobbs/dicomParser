@@ -60,6 +60,13 @@ export interface ReadElementsOptions {
     readonly stopAt?: StopAtOption;
     /** Maximum sequence nesting depth (default 128). */
     readonly maxDepth?: number;
+    /**
+     * `true` when the dataset's transfer syntax is a compressed one, enabling
+     * encapsulation detection for defined-length pixel data (upstream #59/#60):
+     * a defined-length (7FE0,0010) whose value starts with an item tag is
+     * scanned as basic-offset-table + fragments instead of opaque bytes.
+     */
+    readonly compressedTransferSyntax?: boolean;
 }
 
 /** Result of {@link readElements}: always populated, even on failure. */
@@ -90,6 +97,12 @@ interface SequenceFrame {
     readonly items: SequenceItem[];
     readonly bound: number;
     readonly undefinedLength: boolean;
+    /**
+     * Defined-length sequences are speculative: when parsing their content
+     * fails, the whole subtree is rolled back and the element falls back to an
+     * opaque value (safe CP-246 / peek-misdetection recovery, #141/#114).
+     */
+    readonly fallbackPosition: number | undefined;
 }
 
 type Frame = DataSetFrame | SequenceFrame;
@@ -102,6 +115,7 @@ class Tokenizer {
     private readonly stopTag: Tag | undefined;
     private readonly stopInclusive: boolean;
     private readonly maxDepth: number;
+    private readonly compressedTransferSyntax: boolean;
     private readonly stack: Frame[] = [];
     private elements = new Map<Tag, DicomElement>();
     private stoppedAt: Tag | undefined;
@@ -113,6 +127,7 @@ class Tokenizer {
         this.stopTag = options.stopAt === undefined ? undefined : toTag(options.stopAt.tag);
         this.stopInclusive = options.stopAt?.inclusive ?? true;
         this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
+        this.compressedTransferSyntax = options.compressedTransferSyntax ?? false;
         this.stack.push({
             kind: 'dataset',
             explicitVr: options.explicitVr ?? true,
@@ -126,23 +141,66 @@ class Tokenizer {
 
     run(): ReadElementsResult {
         let error: DicomError | undefined;
-        try {
-            while (this.stack.length > 0) {
+        while (this.stack.length > 0) {
+            try {
                 const top = this.stack[this.stack.length - 1] as Frame;
                 if (top.kind === 'dataset') {
                     this.stepDataSet(top);
                 } else {
                     this.stepSequence(top);
                 }
+            } catch (thrown) {
+                if (!(thrown instanceof DicomError)) {
+                    throw thrown;
+                }
+                if (this.recoverToFallback(thrown)) {
+                    continue;
+                }
+                error = thrown;
+                this.salvage();
+                break;
             }
-        } catch (thrown) {
-            if (!(thrown instanceof DicomError)) {
-                throw thrown;
-            }
-            error = thrown;
-            this.salvage();
         }
         return { elements: this.elements, error, stoppedAt: this.stoppedAt };
+    }
+
+    /**
+     * Rolls back to the nearest speculative (defined-length) sequence frame:
+     * its subtree is discarded, the element becomes an opaque value, and
+     * parsing resumes after it. Returns `false` when no fallback exists.
+     */
+    private recoverToFallback(cause: DicomError): boolean {
+        let fallbackIndex = -1;
+        for (let i = this.stack.length - 1; i >= 0; i--) {
+            const frame = this.stack[i] as Frame;
+            if (frame.kind === 'sequence' && frame.fallbackPosition !== undefined) {
+                fallbackIndex = i;
+                break;
+            }
+        }
+        if (fallbackIndex <= 0) {
+            return false;
+        }
+        const frame = this.stack[fallbackIndex] as SequenceFrame;
+        const parent = this.stack[fallbackIndex - 1] as Frame;
+        if (parent.kind !== 'dataset') {
+            return false;
+        }
+        this.stack.length = fallbackIndex;
+        this.stream.position = frame.fallbackPosition as number;
+        this.warn('sequence-fallback', `element ${tagToString(frame.header.tag)} could not be parsed as a sequence (${cause.message}); kept as opaque value`);
+        this.addElement(parent, {
+            kind: 'value',
+            tag: frame.header.tag,
+            vr: frame.header.vr,
+            vrSource: frame.header.vrSource,
+            startOffset: frame.header.startOffset,
+            dataOffset: frame.header.dataOffset,
+            length: frame.header.lengthField,
+            endOffset: frame.header.dataOffset + frame.header.lengthField,
+            hadUndefinedLength: false,
+        });
+        return true;
     }
 
     /** Unwinds open frames after a failure so partial results survive. */
@@ -222,7 +280,47 @@ class Tokenizer {
             this.addElement(frame, this.scanUnknown(header));
             return;
         }
+        // CP-246 (#141): UN with defined length parses as an implicit sequence
+        // when the caller's lookup identifies the tag as SQ; a parse failure
+        // rolls back to an opaque value via the speculative-frame fallback.
+        if (header.vr === 'UN' && this.fitsAsSequence(frame, header) && this.vrLookup?.(header.tag) === 'SQ') {
+            this.pushSequence(frame, header, false);
+            return;
+        }
+        if (this.tryDefinedLengthEncapsulated(frame, header)) {
+            return;
+        }
         this.readValue(frame, header);
+    }
+
+    /** Defined-length sequence candidacy: value must fit the enclosing bound. */
+    private fitsAsSequence(frame: DataSetFrame, header: ElementHeader): boolean {
+        return header.lengthField >= 8 && header.dataOffset + header.lengthField <= frame.bound;
+    }
+
+    /**
+     * Encapsulation detection for defined-length pixel data in a compressed
+     * transfer syntax (upstream #59/#60): the value must start with an item
+     * tag; a failed scan falls back to an opaque value.
+     */
+    private tryDefinedLengthEncapsulated(frame: DataSetFrame, header: ElementHeader): boolean {
+        const applies =
+            this.compressedTransferSyntax && header.tag === TAG_PIXEL_DATA && this.fitsAsSequence(frame, header) && this.stream.peekTag() === TAG_ITEM;
+        if (!applies) {
+            return false;
+        }
+        const resume = header.dataOffset + header.lengthField;
+        try {
+            this.addElement(frame, scanEncapsulatedPixelData(this.stream, header, resume));
+            return true;
+        } catch (thrown) {
+            if (!(thrown instanceof DicomError)) {
+                throw thrown;
+            }
+            this.stream.position = header.dataOffset;
+            this.warn('sequence-fallback', `defined-length pixel data could not be scanned as encapsulated (${thrown.message}); kept as opaque value`);
+            return false;
+        }
     }
 
     private dispatchImplicit(frame: DataSetFrame, header: ElementHeader): void {
@@ -239,7 +337,7 @@ class Tokenizer {
             }
             return;
         }
-        if (this.looksLikeSequence(header)) {
+        if (this.looksLikeSequence(frame, header)) {
             this.pushSequence(frame, header, false);
             return;
         }
@@ -255,8 +353,8 @@ class Tokenizer {
      * are never peeked (upstream #114): without a dictionary match they stay
      * opaque binary. Undefined-length elements must be traversed regardless.
      */
-    private looksLikeSequence(header: ElementHeader): boolean {
-        if (!header.hadUndefinedLength && (isPrivateTag(header.tag) || header.lengthField < 8)) {
+    private looksLikeSequence(frame: DataSetFrame, header: ElementHeader): boolean {
+        if (!header.hadUndefinedLength && (isPrivateTag(header.tag) || !this.fitsAsSequence(frame, header))) {
             return false;
         }
         const peeked = this.stream.peekTag();
@@ -347,6 +445,7 @@ class Tokenizer {
             items: [],
             bound,
             undefinedLength: header.hadUndefinedLength,
+            fallbackPosition: header.hadUndefinedLength ? undefined : bound,
         });
     }
 

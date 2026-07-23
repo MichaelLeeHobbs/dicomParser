@@ -61,7 +61,9 @@ export type ParseWarningCode =
     /** A declared length was inconsistent and was adjusted. */
     | 'length-adjusted'
     /** The `DICM` prefix was found at offset 0 (no 128-byte preamble). */
-    | 'missing-preamble';
+    | 'missing-preamble'
+    /** A speculative sequence/encapsulation parse failed; the element was kept as an opaque value. */
+    | 'sequence-fallback';
 
 /** A recoverable anomaly recorded during parsing. */
 export interface ParseWarning {

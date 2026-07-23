@@ -41,20 +41,21 @@ function readBasicOffsetTable(stream: ByteStream): number[] {
     return basicOffsetTable;
 }
 
-function readFragmentLength(stream: ByteStream, header: ElementHeader): number {
+function readFragmentLength(stream: ByteStream, header: ElementHeader, end: number): number {
     const length = stream.readUint32();
     if (length === UNDEFINED_LENGTH) {
         throw new DicomError('malformed', `encapsulated pixel data ${tagToString(header.tag)}: fragment with undefined length`, {
             offset: stream.position - 4,
         });
     }
-    if (length > stream.remaining) {
+    const available = end - stream.position;
+    if (length > available) {
         stream.warnings.push({
             code: 'length-adjusted',
-            message: `fragment length ${length} exceeds remaining bytes; clamped to ${stream.remaining}`,
+            message: `fragment length ${length} exceeds remaining bytes; clamped to ${available}`,
             offset: stream.position - 4,
         });
-        return stream.remaining;
+        return available;
     }
     return length;
 }
@@ -69,13 +70,16 @@ function readFragmentLength(stream: ByteStream, header: ElementHeader): number {
  *
  * @param stream - Stream positioned at the first value byte
  * @param header - The pixel-data element's header
+ * @param end - Optional exclusive value bound for defined-length encapsulated
+ *              pixel data (upstream #59): the scan stops cleanly there instead
+ *              of requiring a sequence delimiter
  * @returns The encapsulated element with exact byte accounting
  * @throws DicomError `malformed`/`buffer-overread` when the structure is unreadable
  */
-export function scanEncapsulatedPixelData(stream: ByteStream, header: ElementHeader): EncapsulatedElement {
+export function scanEncapsulatedPixelData(stream: ByteStream, header: ElementHeader, end?: number): EncapsulatedElement {
     const basicOffsetTable = readBasicOffsetTable(stream);
     const fragments: Fragment[] = [];
-    const { contentEnd, endOffset } = scanFragments(stream, header, fragments);
+    const { contentEnd, endOffset } = scanFragments(stream, header, fragments, end);
     return {
         kind: 'encapsulated',
         tag: header.tag,
@@ -85,15 +89,16 @@ export function scanEncapsulatedPixelData(stream: ByteStream, header: ElementHea
         dataOffset: header.dataOffset,
         length: contentEnd - header.dataOffset,
         endOffset,
-        hadUndefinedLength: true,
+        hadUndefinedLength: header.hadUndefinedLength,
         basicOffsetTable,
         fragments,
     };
 }
 
-function scanFragments(stream: ByteStream, header: ElementHeader, fragments: Fragment[]): { contentEnd: number; endOffset: number } {
+function scanFragments(stream: ByteStream, header: ElementHeader, fragments: Fragment[], end?: number): { contentEnd: number; endOffset: number } {
     const baseOffset = stream.position;
-    while (stream.remaining >= 8) {
+    const bound = end ?? stream.length;
+    while (bound - stream.position >= 8) {
         const itemStart = stream.position;
         const itemTag = stream.readTag();
         if (itemTag === TAG_SEQUENCE_DELIMITATION) {
@@ -107,7 +112,7 @@ function scanFragments(stream: ByteStream, header: ElementHeader, fragments: Fra
             }
             return { contentEnd: itemStart, endOffset: stream.position };
         }
-        const length = readFragmentLength(stream, header);
+        const length = readFragmentLength(stream, header, bound);
         fragments.push({ offset: itemStart - baseOffset, position: stream.position, length });
         stream.seek(length);
         if (itemTag !== TAG_ITEM) {
@@ -119,11 +124,13 @@ function scanFragments(stream: ByteStream, header: ElementHeader, fragments: Fra
             return { contentEnd: stream.position, endOffset: stream.position };
         }
     }
-    stream.seek(stream.remaining);
-    stream.warnings.push({
-        code: 'missing-sequence-delimiter',
-        message: `pixel data element ${tagToString(header.tag)} missing sequence delimiter (FFFE,E0DD)`,
-        offset: stream.position,
-    });
+    stream.seek(bound - stream.position);
+    if (end === undefined) {
+        stream.warnings.push({
+            code: 'missing-sequence-delimiter',
+            message: `pixel data element ${tagToString(header.tag)} missing sequence delimiter (FFFE,E0DD)`,
+            offset: stream.position,
+        });
+    }
     return { contentEnd: stream.position, endOffset: stream.position };
 }

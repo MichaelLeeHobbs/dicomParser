@@ -72,8 +72,12 @@ interface Plan {
     readonly explicitVr: boolean;
     readonly littleEndian: boolean;
     readonly deflated: boolean;
+    readonly compressed: boolean;
     readonly error: DicomError | undefined;
 }
+
+/** Uncompressed (native pixel data) transfer syntaxes. */
+const NATIVE_TRANSFER_SYNTAXES: ReadonlySet<string> = new Set([TS_IMPLICIT_LE, TS_EXPLICIT_LE, TS_DEFLATED_LE, TS_EXPLICIT_BE]);
 
 function failed(header: Part10Header, bytes: Uint8Array, transferSyntax: string, error: DicomError): ParseResult {
     return {
@@ -102,6 +106,7 @@ function planParse(bytes: Uint8Array, options: ParseOptions): Plan {
         explicitVr: transferSyntax !== TS_IMPLICIT_LE,
         littleEndian: transferSyntax !== TS_EXPLICIT_BE,
         deflated: transferSyntax === TS_DEFLATED_LE,
+        compressed: transferSyntax !== '' && !NATIVE_TRANSFER_SYNTAXES.has(transferSyntax),
         error,
     };
 }
@@ -119,6 +124,7 @@ function parseDataSet(plan: Plan, bytes: Uint8Array, options: ParseOptions): Par
     const stream = new ByteStream(bytes, { position: plan.header.dataSetPosition, littleEndian: plan.littleEndian, warnings });
     const result = readElements(stream, {
         explicitVr: plan.explicitVr,
+        compressedTransferSyntax: plan.compressed,
         ...(options.vrLookup === undefined ? {} : { vrLookup: options.vrLookup }),
         ...(options.stopAt === undefined ? {} : { stopAt: options.stopAt }),
         ...(options.maxDepth === undefined ? {} : { maxDepth: options.maxDepth }),
