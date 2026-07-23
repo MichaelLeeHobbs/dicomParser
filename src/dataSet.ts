@@ -16,6 +16,7 @@
  * @module dataSet
  */
 
+import { decodeDicomText, type CharsetContext } from './charset';
 import type { DicomElement } from './element';
 import { toTag, type Tag, type TagLike } from './tag';
 
@@ -37,11 +38,26 @@ export class DicomDataSet {
     readonly elements: ReadonlyMap<Tag, DicomElement>;
 
     private lazyView: DataView | undefined;
+    private charsetContext: CharsetContext | undefined;
 
     constructor(bytes: Uint8Array, littleEndian: boolean, elements: ReadonlyMap<Tag, DicomElement>) {
         this.bytes = bytes;
         this.littleEndian = littleEndian;
         this.elements = elements;
+    }
+
+    /** The charset context used by string accessors, when assigned by the parser (#146). */
+    get charset(): CharsetContext | undefined {
+        return this.charsetContext;
+    }
+
+    /**
+     * Assigns the charset context used by {@link string}/{@link text}.
+     * Called by the parser after resolving (0008,0005); item datasets inherit
+     * their parent's context unless they carry their own.
+     */
+    applyCharset(context: CharsetContext): void {
+        this.charsetContext = context;
     }
 
     /**
@@ -156,9 +172,13 @@ export class DicomDataSet {
         while (end > element.dataOffset && this.bytes[end - 1] === 0x00) {
             end--;
         }
+        const value = this.bytes.subarray(element.dataOffset, end);
+        if (this.charsetContext !== undefined) {
+            return decodeDicomText(value, this.charsetContext);
+        }
         let result = '';
-        for (let i = element.dataOffset; i < end; i++) {
-            result += String.fromCharCode(this.bytes[i] as number);
+        for (let i = 0; i < value.length; i++) {
+            result += String.fromCharCode(value[i] as number);
         }
         return result;
     }
