@@ -1,34 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DicomDataSet } from '../src/dataSet';
 import { parse, TS_EXPLICIT_BE, type ParseResult } from '../src/parse';
 import { serializeParsed, writeFile } from '../src/writeFile';
 import { dataSet, element, item } from '../src/writeModel';
+import { collectTestImages, TEST_IMAGES } from './helpers/corpus';
 
 // Phase 3 round-trip gates (PLAN.md §6.6): byte-identical re-serialization of
 // unmodified conformant files across the fixture corpus, and DCMTK accepting
 // writer output (dcmdump gate, skipped where DCMTK is not installed).
 
-const IMAGES = join(__dirname, '..', 'testImages');
+const IMAGES = TEST_IMAGES;
 
 function collectFiles(): string[] {
-    const files: string[] = [];
-    const queue = [IMAGES];
-    while (queue.length > 0) {
-        const dir = queue.pop() as string;
-        for (const entry of readdirSync(dir)) {
-            const path = join(dir, entry);
-            if (statSync(path).isDirectory()) {
-                queue.push(path);
-            } else if (entry.endsWith('.dcm') || entry.endsWith('_dfl')) {
-                files.push(path);
-            }
-        }
-    }
-    return files;
+    return collectTestImages();
 }
 
 /** Iterative structural comparison of two parsed datasets. */
@@ -101,15 +89,48 @@ describe('round-trip: modify preserves everything else', () => {
     });
 });
 
-const DCMDUMP = 'C:\\ProgramData\\chocolatey\\bin\\dcmdump.exe';
-const hasDcmtk = existsSync(DCMDUMP);
+const CHOCO_DCMDUMP = 'C:\\ProgramData\\chocolatey\\bin\\dcmdump.exe';
 
-describe.skipIf(!hasDcmtk)('round-trip: DCMTK accepts writer output', () => {
+/**
+ * Resolves the dcmdump oracle across environments, in precedence order:
+ * (a) `$DCMDUMP` if it points at an existing file (explicit override);
+ * (b) a PATH `dcmdump` if `dcmdump --version` runs (apt-installed CI, Linux/mac);
+ * (c) the chocolatey install path if present (local Windows dev).
+ *
+ * @returns the resolved dcmdump command, or `undefined` if none is available.
+ */
+function resolveDcmdump(): string | undefined {
+    const override = process.env.DCMDUMP;
+    if (override !== undefined && override !== '' && existsSync(override)) {
+        return override;
+    }
+    try {
+        execFileSync('dcmdump', ['--version'], { stdio: 'ignore' });
+        return 'dcmdump';
+    } catch {
+        // not on PATH — fall through to the local Windows install
+    }
+    if (existsSync(CHOCO_DCMDUMP)) {
+        return CHOCO_DCMDUMP;
+    }
+    return undefined;
+}
+
+const dcmdump = resolveDcmdump();
+
+// Anti-silent-skip guard (B1): when REQUIRE_DCMTK=1 (the CI acceptance job), a
+// missing/broken dcmdump must fail red rather than skip green — a silently
+// skipped oracle is the exact failure mode this gate exists to catch.
+it.runIf(process.env.REQUIRE_DCMTK === '1')('dcmdump is available', () => {
+    expect(dcmdump).toBeDefined();
+});
+
+describe.skipIf(dcmdump === undefined)('round-trip: DCMTK accepts writer output', () => {
     function dcmdumpAccepts(bytes: Uint8Array, name: string): string {
         const dir = mkdtempSync(join(tmpdir(), 'dicom-writer-'));
         const path = join(dir, name);
         writeFileSync(path, bytes);
-        return execFileSync(DCMDUMP, [path], { encoding: 'utf8' });
+        return execFileSync(dcmdump as string, [path], { encoding: 'utf8' });
     }
 
     it('accepts a from-scratch file', () => {

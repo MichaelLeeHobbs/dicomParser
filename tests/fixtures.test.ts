@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { EncapsulatedElement, ValueElement } from '../src/element';
 import { parse, parseAsync, TS_DEFLATED_LE, TS_EXPLICIT_BE, TS_EXPLICIT_LE, TS_IMPLICIT_LE, type ParseResult } from '../src/parse';
+import { collectTestImages, TEST_IMAGES } from './helpers/corpus';
 
 // Real-file gate over the retained upstream fixture corpus (testImages/).
 // DCMTK ground truth for CT1_UNC: Modality CT, Rows 512, Columns 512,
 // PixelData OW 524288 bytes (explicit LE variant).
 
-const IMAGES = join(__dirname, '..', 'testImages');
+const IMAGES = TEST_IMAGES;
 
 function load(...parts: string[]): Uint8Array {
     return new Uint8Array(readFileSync(join(IMAGES, ...parts)));
@@ -97,19 +98,7 @@ describe('encapsulated pixel data files', () => {
 });
 
 describe('whole-corpus smoke', () => {
-    const files: string[] = [];
-    const queue = [IMAGES];
-    while (queue.length > 0) {
-        const dir = queue.pop() as string;
-        for (const entry of readdirSync(dir)) {
-            const path = join(dir, entry);
-            if (statSync(path).isDirectory()) {
-                queue.push(path);
-            } else if (entry.endsWith('.dcm') || entry.endsWith('_dfl')) {
-                files.push(path);
-            }
-        }
-    }
+    const files = collectTestImages();
 
     it('found the corpus', () => {
         expect(files.length).toBeGreaterThan(15);

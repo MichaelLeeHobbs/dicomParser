@@ -39,6 +39,23 @@ jobs:
             - run: pnpm run lint
             - run: pnpm run typecheck
 
+    acceptance:
+        name: Acceptance (DCMTK oracle)
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: pnpm/action-setup@v6
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: 24
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile
+            - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends dcmtk
+            - run: dcmdump --version
+            - run: pnpm exec vitest run tests/roundTrip.test.ts
+              env:
+                  REQUIRE_DCMTK: '1'
+
     audit:
         name: Security Audit
         runs-on: ubuntu-latest
