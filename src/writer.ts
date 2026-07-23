@@ -123,10 +123,49 @@ function normalizeOne(source: WriteElement, explicitVr: boolean, charset: WriteC
         }
         payload = { kind: 'bytes', bytes };
     }
-    if (explicitVr && source.vr === undefined) {
-        throw new DicomError('invalid-argument', `element ${tagToString(source.tag)} has no VR; explicit-VR output requires one`);
+    if (explicitVr) {
+        checkExplicitVr(source);
     }
     return { tag: source.tag, vr: source.vr, undefinedLength: source.undefinedLength ?? false, payload, contentSize: 0, totalSize: 0 };
+}
+
+/** Validates that an element carries a well-formed 2-character VR for explicit output. */
+function checkExplicitVr(source: WriteElement): void {
+    if (source.vr === undefined) {
+        throw new DicomError('invalid-argument', `element ${tagToString(source.tag)} has no VR; explicit-VR output requires one`);
+    }
+    if (source.vr.length !== 2) {
+        throw new DicomError(
+            'invalid-argument',
+            `element ${tagToString(source.tag)} has VR '${source.vr}' of length ${source.vr.length}; a VR must be exactly 2 characters`
+        );
+    }
+}
+
+/** Largest value a 16-bit length field can hold; 0xFFFF is reserved as an odd-length flag by convention. */
+const MAX_SHORT_LENGTH = 0xfffe;
+/** Largest value a 32-bit length field can hold (0xFFFFFFFF is the undefined-length sentinel). */
+const MAX_LONG_LENGTH = 0xfffffffe;
+
+/**
+ * Verifies a defined-length element's value fits its encoded length field.
+ * Without this a value over 0xFFFF under a short-form VR silently truncates
+ * (mod 65536) — the internal size accounting still balances, so the assert
+ * cannot catch it.
+ */
+function checkLengthField(el: SizedElement, explicitVr: boolean): void {
+    if (el.undefinedLength) {
+        return;
+    }
+    const isLong = !explicitVr || explicitLengthBytes(el.vr as string) === 4;
+    const max = isLong ? MAX_LONG_LENGTH : MAX_SHORT_LENGTH;
+    if (el.contentSize > max) {
+        throw new DicomError(
+            'invalid-argument',
+            `element ${tagToString(el.tag)} value length ${el.contentSize} exceeds its ${isLong ? 32 : 16}-bit length field (max ${max})` +
+                (isLong ? '' : ` — use a long-form VR (e.g. OB/OW/UN) for values over ${max} bytes`)
+        );
+    }
 }
 
 function headerSize(el: SizedElement, explicitVr: boolean): number {
@@ -168,6 +207,7 @@ function sizeElement(el: SizedElement, explicitVr: boolean): void {
         const fragmentsSize = el.payload.fragments.reduce((sum, f) => sum + 8 + f.length, 0);
         el.contentSize = 8 + el.payload.basicOffsetTable.length * 4 + fragmentsSize;
     }
+    checkLengthField(el, explicitVr);
     el.totalSize = headerSize(el, explicitVr) + el.contentSize + (el.undefinedLength ? 8 : 0);
 }
 

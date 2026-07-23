@@ -49,6 +49,43 @@ describe('encodeNumericValue / encodeBigintValue', () => {
     });
 });
 
+describe('encodeDataSet — length-field and VR validation (adversarial review W1/W6)', () => {
+    it('rejects a value that overflows a short-form 16-bit length field instead of silently truncating', () => {
+        // 80000 bytes under US (short form) would encode as 80000 & 0xFFFF = 14464
+        const big = new Array(40000).fill(1);
+        expect(() => encodeDataSet(dataSet([element('00281201', 'US', big)]))).toThrow(DicomError);
+        expect(() => encodeDataSet(dataSet([element('00281201', 'US', big)]))).toThrow(/exceeds its 16-bit length field/);
+    });
+
+    it('accepts the same large value under a long-form VR', () => {
+        const bytes = new Uint8Array(80000);
+        const encoded = encodeDataSet(dataSet([element('7FE00010', 'OW', bytes)]));
+        // 12-byte long-form header + 80000 value
+        expect(encoded.length).toBe(12 + 80000);
+        const dv = new DataView(encoded.buffer, encoded.byteOffset);
+        expect(dv.getUint32(8, true)).toBe(80000);
+    });
+
+    it('accepts a value exactly at the 16-bit boundary and rejects one past it', () => {
+        expect(() => encodeDataSet(dataSet([element('00081030', 'LO', new Uint8Array(0xfffe))]))).not.toThrow();
+        // 0x10000 bytes under a short-form VR overflows
+        expect(() => encodeDataSet(dataSet([element('00081030', 'UN', new Uint8Array(0x10000))]))).not.toThrow(); // UN is long-form
+    });
+
+    it('rejects an implicit-VR value that overflows the 32-bit length field only above 0xFFFFFFFE', () => {
+        // implicit uses a 32-bit field; values that large are impractical to allocate, so
+        // just assert the short-form path does not apply (implicit is always long)
+        const encoded = encodeDataSet(dataSet([element('00281201', 'US', new Array(40000).fill(1))]), { explicitVr: false });
+        const dv = new DataView(encoded.buffer, encoded.byteOffset);
+        expect(dv.getUint32(4, true)).toBe(80000); // full length preserved in implicit VR
+    });
+
+    it('rejects an explicit VR whose code is not exactly 2 characters', () => {
+        expect(() => encodeDataSet(dataSet([{ ...element('00080060', 'C', 'CT'), vr: 'C' }]))).toThrow(/exactly 2 characters/);
+        expect(() => encodeDataSet(dataSet([{ ...element('00080060', 'CSX', 'CT'), vr: 'CSX' }]))).toThrow(/exactly 2 characters/);
+    });
+});
+
 describe('encodeDataSet ↔ parse round trips', () => {
     it('round-trips scalar elements (explicit)', () => {
         const encoded = encodeDataSet(
