@@ -8,9 +8,9 @@ Machine: Windows 10, Node 24, local dev box. Workload: CT1_UNC explicit LE (526 
 implicit LE + fragmented JPEG-LS encapsulated, parsed together per iteration; median of
 100 iterations after 10 warmups (`tests/benchmark.test.ts`).
 
-| Parser | median / iteration |
-| --- | --- |
-| `dicom-parser@1.8.21` (`parseDicom`) | 0.524 ms |
+| Parser                                    | median / iteration         |
+| ----------------------------------------- | -------------------------- |
+| `dicom-parser@1.8.21` (`parseDicom`)      | 0.524 ms                   |
 | fork, compat façade (`compat.parseDicom`) | **0.433 ms** (~17% faster) |
 
 The compat number includes the façade conversion overhead; the core `parse()` alone is

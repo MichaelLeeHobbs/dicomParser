@@ -20,7 +20,20 @@
  * - Private implicit undefined-length sequences keep their parsed `items`
  *   (legacy discarded them).
  * - Parse failures throw a `DicomError` (an `Error`) with the partial
- *   `dataSet` attached — not a bare `{ exception, dataSet }` object.
+ *   `dataSet` attached — not a bare `{ exception, dataSet }` object. Note that
+ *   value-level truncation is a warning, not a failure (the core salvages and
+ *   clamps the value), so a file legacy rejected may parse here with a
+ *   truncated element and an `odd-length`/`unexpected-eof` warning (review A1).
+ * - Deflated files: legacy re-parsed the preamble/DICM bytes as junk elements
+ *   (`x00000000`, `x49444d43`, `x4c550004`); those never appear here (review A3).
+ * - `untilTag` stops at the first tag ≥ the requested one (≥ semantics), so it
+ *   works for absent tags and parses a terminating SQ's items (review A4).
+ * - `string()` is charset-aware (honors SpecificCharacterSet), so a value under
+ *   a non-Latin charset decodes to real text rather than mojibake (review A5);
+ *   consumers that re-decode raw bytes should read the bytes, not `string()`.
+ * - Accessor edge cases return `undefined` rather than throwing or reading a
+ *   neighbor element (out-of-range `string(tag,i)`/`uint16(tag,i)`,
+ *   whitespace-only `floatString`), matching the core (review A6).
  *
  * @module compat
  */
@@ -90,9 +103,14 @@ export class DataSet {
         this.metaCore = metaCore;
     }
 
-    /** Meta (group 0002) reads go to the always-little-endian meta dataset. */
+    /**
+     * Routes low-group reads to the always-little-endian meta dataset — but only
+     * when the tag actually lives there. A group 0000/0001 element that appears
+     * in the main dataset (non-standard but real) must still be read from the
+     * core, not silently return `undefined` (review A2).
+     */
     private pick(tag: string): DicomDataSet {
-        if (this.metaCore !== undefined && toTag(tag) < 0x00030000) {
+        if (this.metaCore !== undefined && toTag(tag) < 0x00030000 && this.metaCore.elements.has(toTag(tag))) {
             return this.metaCore;
         }
         return this.core;

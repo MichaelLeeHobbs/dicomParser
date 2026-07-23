@@ -13,66 +13,78 @@ input behind PLAN.md's ranked backlog. Each item carries a disposition for this 
 ## Part 1 — Open Pull Requests (12)
 
 ### #280 — feat: Support for VR type "UV" (Unsigned 64-bit Very Long)
+
 - Opened 2026, @PolarsBear — +305/−7, 10 files
 - Implements the UV VR (64-bit unsigned, DICOM 2019a PS3.5 §6.2) using `BigInt`. Without it, a UV element's 32-bit length field is misread, permanently offsetting the parse and corrupting everything after the tag (companion issue #281).
 - Category: missing-VR-or-feature
 - **Disposition: port-the-PR.** A rewrite must handle all post-2019 VRs: UV, SV (signed 64-bit), OV (other 64-bit). Use `BigInt`/`BigUint64Array` accessors — no back-compat concern in a modern fork. This is the only open PR fixing a live data-corruption bug.
 
 ### #278 — Improve type declaration
+
 - Opened 2025, @Ragnar-Oock — +230/−39, 1 file (`index.d.ts`); CI dead (broken Firefox download URL)
 - Replaces PR #258; substantially reworks the hand-written `.d.ts`, splitting the kitchen-sink `Element` interface toward the actual runtime shapes.
 - Category: types/TS
 - **Disposition: fixed-by-design** — a ground-up TS rewrite generates real types. But **steal the design idea**: model `Element` as a discriminated union (basic element | sequence | encapsulated pixel data | meta element) rather than one interface with 8 optional fields (see #257).
 
 ### #277 — Throw error instances instead of strings and objects
+
 - Opened 2025, @Ragnar-Oock — +376/−255, 29 files; CI dead. Closes #46.
 - Introduces `DicomParserError` replacing the thrown `{exception, dataSet}` object; replaces thrown strings with `Error`/`TypeError`/`RangeError` with proper messages.
 - Category: parser-bug (error-model)
 - **Disposition: fixed-by-design** — a mission-critical-style rewrite (Result pattern or typed error classes) subsumes this entirely. Keep one behavior from the old object-throw: the partially-parsed dataset must remain reachable from the error (see #203).
 
 ### #268 — UntilTag should stop on the first tag greater than the requested tag
+
 - Opened 2024, @jpambrun — +105/−127, 5 files, mergeable-clean. Fixes #104.
 - Changes `untilTag` from exact-match (`===`) to ordered comparison: since DICOM tags are sorted, parsing stops at the first tag ≥ the requested one. Enables partial parsing (skip group 6000/pixel data) without knowing whether the tag exists. Author notes "only superficially tested."
 - Category: parser-bug
 - **Disposition: port-the-PR.** Correct semantics for the fork's stop-condition option; add the tests the PR lacked.
 
 ### #265 — chore(deps-dev): bump follow-redirects 1.14.8 → 1.15.4
+
 - Opened 2024, dependabot. Dev-dep security bump for the legacy webpack/karma chain.
 - Category: build/tooling — **Disposition: wontfix/stale** (fork won't inherit this toolchain).
 
 ### #262 — chore(deps-dev): bump browserify-sign 4.2.1 → 4.2.2
+
 - Opened 2023, dependabot. Same as above.
 - Category: build/tooling — **Disposition: wontfix/stale.**
 
 ### #239 — Draft: Update node to latest LTS release for build purposes
+
 - Opened 2023, @yagni — +10,720/−21,758, merge-dirty, explicitly draft
 - Checklist to get off Node 16: node tests (#252), remove deprecations, update deps.
 - Category: build/tooling — **Disposition: wontfix/stale** — the fork starts on a current toolchain; this is fixed-by-design as a side effect.
 
 ### #203 — Fix parsing of truncated byte arrays
+
 - Opened 2022, @jmhmd — +29/−3, 2 files, mergeable-clean
 - Catches dataset parsing exceptions, merges the successfully-parsed meta header with the partially-parsed dataset, and re-throws — so a truncated file still yields everything parsed up to the failure point.
 - Category: parser-bug (robustness)
 - **Disposition: port-the-PR (as design requirement).** In the fork: on parse failure, return the partial dataset plus a typed error / warnings list — real-world PACS truncation is common and salvaging the header is valuable.
 
 ### #147 — Typescript rework (WIP)
+
 - Opened 2020, @hiddentn — +9,536/−12,909, 92 files, merge-dirty, **head repo deleted**
 - A basic mechanical JS→TS conversion; coverage broken; abandoned.
-- Category: types/TS — **Disposition: wontfix/stale** — the fork *is* this PR done properly; nothing salvageable from a deleted head repo.
+- Category: types/TS — **Disposition: wontfix/stale** — the fork _is_ this PR done properly; nothing salvageable from a deleted head repo.
 
 ### #60 — add support for overriding 'isEncapsulated()'
+
 - Opened 2017, @keean — +20/−12, 3 files, merge-dirty
 - Adds `transferSyntax` to `ByteStream` and factors encapsulation detection into an overridable `isEncapsulated()`, so files with nonstandard encapsulated pixel data (defined length instead of 0xFFFFFFFF, see #59) can be parsed via a user hook.
 - Category: missing-VR-or-feature (extensibility hook)
 - **Disposition: port-the-PR (the concept).** Two ideas worth keeping: (a) transfer syntax should be visible to element-reading logic — trivial in a rewrite; (b) encapsulation detection should be an injectable policy/lenient-mode option.
 
 ### #56 — Heap performance
+
 - Opened 2016, @jkrot — +69/−63, merge-dirty
 - Hoists variable declarations out of loops etc. for ~4% claimed improvement when bulk-parsing 1000+ files (companion issue #54).
 - Category: build/tooling (perf)
-- **Disposition: wontfix/stale** — micro-optimizations for 2016-era V8. Carry forward only the *requirement*: benchmark bulk parsing and avoid per-element garbage.
+- **Disposition: wontfix/stale** — micro-optimizations for 2016-era V8. Carry forward only the _requirement_: benchmark bulk parsing and avoid per-element garbage.
 
 ### #52 — Don't include tag if not needed
+
 - Opened 2016, @jssuttles — +121/−25, merge-dirty
 - Extends `untilTag` to accept `{ tag, include: false }` so the terminating element can be excluded from the result.
 - Category: missing-VR-or-feature
@@ -93,7 +105,7 @@ Non-compliant files write length `0xFFFFFFFF` instead of the mandated `0` on the
 **Disposition: explicit-work-item** — delimitation items (E00D/E0DD) should always be treated as zero-length regardless of the encoded length field; emit a warning instead of failing.
 
 **#244 — Sequence Item Delimiter tag read as an element** (2023, @rennerg, "bug report" label)
-For undefined-length sequences containing undefined-length items, the item delimiter (FFFE,E00D) leaks into the parsed output as if it were a data element. Maintainer confirmed it's tricky: per the standard the *sequence* delimiter is part of the SQ value but the *item* delimiter is not part of the item value.
+For undefined-length sequences containing undefined-length items, the item delimiter (FFFE,E00D) leaks into the parsed output as if it were a data element. Maintainer confirmed it's tricky: per the standard the _sequence_ delimiter is part of the SQ value but the _item_ delimiter is not part of the item value.
 **Disposition: explicit-work-item** — the fork's sequence reader must consume delimiters structurally and never surface them as dataset elements (or surface them uniformly and explicitly typed — pick one model; see #143).
 
 **#143 — Sequence Delimitation Item not present in the element list** (2020, @baptiste-le-m, "bug report")
@@ -101,7 +113,7 @@ The inverse complaint: SequenceDelimitationItem is silently dropped, while ItemD
 **Disposition: explicit-work-item (same item as #244)** — define one consistent, documented representation for delimiters + `hadUndefinedLength` + offsets so consumers can reconstruct exact byte ranges. This is a design decision the fork gets to make cleanly.
 
 **#141 — Cannot load DICOM where SQ uses VR:UN with undefined length** (2020, @malaterre, "bug report")
-CP-246 territory. Long thread conclusion: UN + undefined length must be parsed as an implicit-VR-LE sequence (works today), but UN + *defined* length is left as opaque binary even when a vrCallback/dictionary could identify it as SQ — so CP-246-encoded sequences are unreachable. malaterre: treat "UN + defined length" like an implicit-TS SQ when a dictionary says so.
+CP-246 territory. Long thread conclusion: UN + undefined length must be parsed as an implicit-VR-LE sequence (works today), but UN + _defined_ length is left as opaque binary even when a vrCallback/dictionary could identify it as SQ — so CP-246-encoded sequences are unreachable. malaterre: treat "UN + defined length" like an implicit-TS SQ when a dictionary says so.
 **Disposition: explicit-work-item** — full CP-246 support: UN + undefined length → parse as implicit SQ; UN + defined length → attempt implicit SQ parse when dictionary/callback identifies SQ (with safe fallback to binary on parse failure).
 
 **#181 — Parser doesn't close correctly an undefined length sequence** (2021, @ianholing)
@@ -110,7 +122,7 @@ Undefined-length SQ containing one defined-length item: parser hunts for an item
 
 **#114 — Fail to find image element in DICOM with private SIEMENS sequence tags** (2019, @Zaid-Safadi, "bug")
 Root cause (diagnosed in comments): in implicit VR, the parser uses a byte-peek heuristic to guess private elements are sequences; a nonconforming private "sequence" makes it compute a wrong length and skip the rest of the file, losing PixelData. Other toolkits treat implicit private elements as UN/binary. Consensus in-thread (chafey, yagni): skip the sequence-peek for private tags unless a vrCallback says SQ; breaking change deferred to 2.0.
-**Disposition: explicit-work-item** — in the fork, never heuristically sequence-parse *private* implicit elements; parse them only when the dictionary/vrCallback identifies SQ. Directly related: #245, #141.
+**Disposition: explicit-work-item** — in the fork, never heuristically sequence-parse _private_ implicit elements; parse them only when the dictionary/vrCallback identifies SQ. Directly related: #245, #141.
 
 **#125 — Fatal error when parsing image (deflated transfer syntax)** (2019, @create3000)
 `TypeError: this is undefined` at parseDicom.js:58 for Deflated Explicit VR LE files. yagni diagnosed broken pako-detection code paths in Node/strict mode.
@@ -147,7 +159,7 @@ Raw datasets missing the P10 meta header (no 0002,0010) just error. chafey's sta
 **Disposition: explicit-work-item** — first-class `parseDataset(bytes, { transferSyntax })` API (or `defaultTransferSyntax` option) for headerless/raw datasets. Trivial in a rewrite, frequently requested.
 
 **#245 — Failed to extract private tag sequence (3009,1201)** (2023, @pgfeller)
-User maintains a patched build to parse vendor-private sequences; asks for an opt-in `ParseDicomOptions` flag to process private tag sequences. Mirror-image of #114 (which wants private heuristic parsing *off* by default).
+User maintains a patched build to parse vendor-private sequences; asks for an opt-in `ParseDicomOptions` flag to process private tag sequences. Mirror-image of #114 (which wants private heuristic parsing _off_ by default).
 **Disposition: explicit-work-item (same design item as #114)** — default: private implicit elements are opaque; opt-in: vrCallback/private-dictionary can declare them SQ and get full parsing. One coherent policy resolves #114 + #245 + part of #141.
 
 **#107 — Clarify 1.2.840.113619.5.2 (Implicit VR Big Endian DLX, GE Private) support** (2018, @malaterre)
@@ -159,7 +171,7 @@ Asks about CMS-encrypted DICOM (PS3.15 attribute-level encryption), stuck on PWR
 **Disposition: wontfix** — cryptography does not belong in a parsing library; the parser only needs to surface Encrypted Attributes Sequence (0400,0500) elements intact.
 
 **#270 — why dicomParser does not have pako as dependency** (2024, @sedghi)
-`pako` is sniffed off the global/window rather than imported — historic zero-dependency choice — which breaks ESM bundling of dicom-image-loader. Thread consensus (incl. chafey): optional *injection* at init is acceptable; don't make it mandatory.
+`pako` is sniffed off the global/window rather than imported — historic zero-dependency choice — which breaks ESM bundling of dicom-image-loader. Thread consensus (incl. chafey): optional _injection_ at init is acceptable; don't make it mandatory.
 **Disposition: fixed-by-design** — fork uses conditional exports: Node build uses `node:zlib`; browser build accepts an injected inflate or `DecompressionStream('deflate-raw')` (Baseline since 2023) with pako as optional fallback. Kills #270, #125, #109 together.
 
 **#264 — Reading JPEG2000 Lossless data** (2024, @syedkibrahim)
@@ -215,21 +227,21 @@ Likely the age simply isn't in that directory record (viewers compute it from bi
 
 **#214 — Version 2.0 Discussion** (2022, @yagni)
 The upstream 2.0 wishlist thread. Signals: **ESM is the top ask**; TS rewrite openly discussed but uncommitted; element-type discrimination named the biggest DX pain; Error-throwing (#46) slated for 2.0; a contributor asks for **DICOM writing**; no plan to fold into the cornerstone monorepo.
-**Disposition: fixed-by-design** — the fork *is* v2.0. Free market research; writing is the differentiator (now in scope, PLAN.md item 13).
+**Disposition: fixed-by-design** — the fork _is_ v2.0. Free market research; writing is the differentiator (now in scope, PLAN.md item 13).
 
 ---
 
 ## Summary
 
-| Category | Count | Items |
-|---|---|---|
-| parser-bug | 12 | #281, #266, #244, #143, #141, #181, #114, #125, #104, #253, #73, #46 |
-| missing-VR-or-feature | 11 | PR #280, PR #60, PR #52, #59, #146, #48, #245, #107, #113, #270, #264 |
-| types/TS | 4 | PR #278, PR #147, #279, #257 |
-| build/tooling | 10 | PR #265, PR #262, PR #239, PR #56, #282, #252, #237, #140, #91, #86 |
-| docs | 2 | #151, #109 |
-| question/support | 2 | #275, #264 (dual) |
-| meta | 3 | #214, PR #203, PR #268 |
+| Category              | Count | Items                                                                 |
+| --------------------- | ----- | --------------------------------------------------------------------- |
+| parser-bug            | 12    | #281, #266, #244, #143, #141, #181, #114, #125, #104, #253, #73, #46  |
+| missing-VR-or-feature | 11    | PR #280, PR #60, PR #52, #59, #146, #48, #245, #107, #113, #270, #264 |
+| types/TS              | 4     | PR #278, PR #147, #279, #257                                          |
+| build/tooling         | 10    | PR #265, PR #262, PR #239, PR #56, #282, #252, #237, #140, #91, #86   |
+| docs                  | 2     | #151, #109                                                            |
+| question/support      | 2     | #275, #264 (dual)                                                     |
+| meta                  | 3     | #214, PR #203, PR #268                                                |
 
 Disposition totals: **fixed-by-design ≈ 14** · **explicit-work-item ≈ 13** · **port-the-PR 5**
 (#280, #268, #203, #60-concept, #52-concept) · **wontfix/stale ≈ 13**.

@@ -31,6 +31,14 @@ npmjs.com (possible now that the package exists). Until then, tag-push publishes
 the `npm publish` step. Known cosmetic issue: npm forced `latest` → `2.0.0-alpha.0` on first
 publish (unavoidable; self-corrects at `2.0.0` final).
 
+**Adversarial review (2026-07-23)**: a five-reviewer adversarial pass found and fixed a set of
+real bugs before rc.1 — writer length-field corruption (PR #14), tokenizer silent data-loss on
+malformed input (PR #15), an uncatchable OOM amplification vector (PR #16), and ISO 2022 charset
+mojibake (PR #17). Full findings, severities, and the documented lower-severity/infra follow-ups
+(notably: CI does not run the differential/dcmdump/benchmark acceptance gates — they `skipIf`) are
+in [docs/adversarial-review.md](docs/adversarial-review.md). Address the §9 CI-gate item before
+2.0.0 final.
+
 ## 1. Mission
 
 A ground-up TypeScript remake of dicomParser: modern toolchain, real types, resolution of the

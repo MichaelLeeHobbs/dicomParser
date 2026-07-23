@@ -716,3 +716,35 @@ function sq_(element: unknown): SequenceElement {
     expect((element as SequenceElement).kind).toBe('sequence');
     return element as SequenceElement;
 }
+
+describe('readElements — diagnostic warnings (adversarial review W2/W3/W5)', () => {
+    it('warns on a duplicate tag at the same level (keeping the last value)', () => {
+        // (0008,0018) UI 'A ', then (0008,0018) again 'B '
+        const bytes = [0x08, 0x00, 0x18, 0x00, 0x55, 0x49, 0x02, 0x00, 0x41, 0x20, 0x08, 0x00, 0x18, 0x00, 0x55, 0x49, 0x02, 0x00, 0x42, 0x20];
+        const stream = streamOf(bytes);
+        const result = readElements(stream, { explicitVr: true });
+        expect(result.error).toBeUndefined();
+        expect(result.elements.size).toBe(1);
+        expect(stream.warnings.some(w => w.code === 'duplicate-tag')).toBe(true);
+    });
+
+    it('warns on an odd defined-length value', () => {
+        // (0008,0018) SH length 3 'ABC'
+        const bytes = [0x08, 0x00, 0x18, 0x00, 0x53, 0x48, 0x03, 0x00, 0x41, 0x42, 0x43];
+        const stream = streamOf(bytes);
+        readElements(stream, { explicitVr: true });
+        expect(stream.warnings.some(w => w.code === 'odd-length')).toBe(true);
+    });
+
+    it('warns when a basic offset table length is not a multiple of 4', () => {
+        // encapsulated OB, BOT item length 6 (not a multiple of 4)
+        const enc = [
+            0xe0, 0x7f, 0x10, 0x00, 0x4f, 0x42, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xfe, 0xff, 0x00, 0xe0, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0xfe, 0xff, 0xdd, 0xe0, 0x00, 0x00, 0x00, 0x00,
+        ];
+        const stream = streamOf(enc);
+        const result = readElements(stream, { explicitVr: true });
+        expect(result.error).toBeUndefined();
+        expect(stream.warnings.some(w => w.message.includes('not a multiple of 4'))).toBe(true);
+    });
+});

@@ -171,3 +171,13 @@ describe('compat against real files (the _p10ToJson usage pattern)', () => {
         expect(dataSet.uint16('x00280011')).toBe(512);
     });
 });
+
+describe('compat — group 0000/0001 dataset element routing (review A2)', () => {
+    it('reads a low-group element from the dataset when it is not in the meta group', () => {
+        // (0000,0100) US 0xbeef in the dataset (not group 0002, not in meta)
+        const dataset = explicitEl('00000100', 'US', Uint8Array.from([0xef, 0xbe]));
+        const ds = parseDicom(p10(TS.explicitLE, [dataset]));
+        expect(ds.elements['x00000100']).toBeDefined();
+        expect(ds.uint16('x00000100')).toBe(0xbeef);
+    });
+});

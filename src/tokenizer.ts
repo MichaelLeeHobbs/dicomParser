@@ -408,6 +408,11 @@ class Tokenizer {
     /** Adds a defined-length value element, clamping only at stream truncation. */
     private readValue(frame: DataSetFrame, header: ElementHeader): void {
         let length = header.lengthField;
+        if (length % 2 !== 0) {
+            // odd value lengths are non-conformant (DICOM values are even); surface
+            // it so consumers can predict that re-serialization will reject the file
+            this.warn('odd-length', `element ${tagToString(header.tag)} has an odd value length ${length}`);
+        }
         const end = header.dataOffset + length;
         if (end > frame.bound) {
             if (frame.bound < this.stream.length) {
@@ -604,6 +609,11 @@ class Tokenizer {
 
     private addElement(frame: DataSetFrame, element: DicomElement): void {
         this.bumpStructures(element.kind === 'encapsulated' ? 1 + element.fragments.length : 1);
+        if (frame.elements.has(element.tag)) {
+            // a repeated tag at the same level is non-conformant; the Map keeps the
+            // last value (matching legacy), but the collision is otherwise silent
+            this.warn('duplicate-tag', `tag ${tagToString(element.tag)} appears more than once at the same level; keeping the last value`);
+        }
         frame.elements.set(element.tag, element);
     }
 
