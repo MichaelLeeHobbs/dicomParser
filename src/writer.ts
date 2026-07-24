@@ -293,7 +293,6 @@ function pushElementContent(tokens: EmitToken[], el: SizedElement, emitter: Emit
         emitter.uint32(fragment.length);
         emitter.raw(fragment);
     }
-    // fragments were emitted inline; drop the delimiter token order fix below
 }
 
 /**

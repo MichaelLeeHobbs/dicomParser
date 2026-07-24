@@ -132,6 +132,15 @@ describe('compat namespace object', () => {
         expect(dicomParser.parsePN('F^G')?.givenName).toBe('G');
         expect(dicomParser.version).toBe(VERSION);
     });
+
+    it('exposes readPart10Header for meta/head probing (fork #58)', () => {
+        const file = p10(TS.explicitLE, [explicitEl('00100010', 'PN', latin1('DOE '))]);
+        const header = dicomParser.readPart10Header(file);
+        expect(header.transferSyntax).toBe(TS.explicitLE);
+        expect(header.dataSetPosition).toBeGreaterThan(132); // past preamble+DICM+meta
+        expect(header.meta.string('x00020010')).toBe(TS.explicitLE);
+        expect(header.error).toBeUndefined();
+    });
 });
 
 describe('compat against real files (the _p10ToJson usage pattern)', () => {

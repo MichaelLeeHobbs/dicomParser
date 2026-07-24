@@ -44,7 +44,7 @@ import { DicomDataSet } from './dataSet';
 import type { DicomElement } from './element';
 import { DicomError } from './errors';
 import { parse, type ParseResult } from './parse';
-import { readPart10Header } from './part10';
+import { readPart10Header, type Part10Header } from './part10';
 import { isPrivateTag as corePrivate, tagFromString, tagToString, toTag, type Tag } from './tag';
 import { isStringVr } from './vr';
 import { parseDA, parsePN, parseTM } from './valueParsers';
@@ -323,6 +323,18 @@ export function isPrivateTag(tag: string): boolean {
     return corePrivate(toTag(tag));
 }
 
+/**
+ * Reads the Part-10 preamble, `DICM` prefix and file meta group (group 0002)
+ * without parsing the dataset — the v1 `dicomParser.readPart10Header` slot.
+ *
+ * Unlike legacy (which returned a v1 `DataSet` of the meta), this returns the
+ * core {@link Part10Header} — `{ meta, transferSyntax, dataSetPosition, warnings,
+ * error, ... }`. `meta` is a core `DicomDataSet`; `transferSyntax` and
+ * `dataSetPosition` (the first dataset byte) are the fields a bounded head-read
+ * needs. This shape divergence is noted in `docs/migration-v1.md`.
+ */
+export { readPart10Header, type Part10Header };
+
 /** The v1-style namespace object (`import dicomParser from '.../compat'`). */
 const dicomParser = {
     parseDicom,
@@ -331,6 +343,7 @@ const dicomParser = {
     parseDA,
     parseTM,
     parsePN,
+    readPart10Header,
     version: VERSION,
 };
 
