@@ -234,27 +234,43 @@ class Tokenizer {
     }
 
     private stepDataSet(frame: DataSetFrame): void {
-        if (frame.root && this.stopPending) {
+        if (frame.root) {
+            this.stepRootFrame(frame);
+            return;
+        }
+        this.stepItemFrame(frame);
+    }
+
+    /** Steps the root dataset frame: stop-pending, EOF, or read the next element. */
+    private stepRootFrame(frame: DataSetFrame): void {
+        if (this.stopPending || this.stream.position >= frame.bound) {
+            this.finalizeDataSet(frame, this.stream.position, this.stream.position);
+            return;
+        }
+        this.readElement(frame);
+    }
+
+    /** Steps a sequence-item dataset frame. */
+    private stepItemFrame(frame: DataSetFrame): void {
+        // A defined-length item is complete once it reaches its bound. Finalize
+        // before peeking for a delimitation item, so an item ending at its exact
+        // bound never consumes an ancestor's FFFE,E00D that happens to sit at
+        // that offset (review D1). A stray delimiter strictly inside the bound is
+        // still terminated by the peek below (review #1/#3/#7).
+        if (!frame.undefinedLength && this.stream.position >= frame.bound) {
             this.finalizeDataSet(frame, this.stream.position, this.stream.position);
             return;
         }
         // Delimitation items are structural terminators at element boundaries in
-        // any non-root (item) frame — a real data element never has group FFFE,
-        // so this cannot misfire on genuine values (review #1/#3/#7).
-        if (!frame.root && this.terminateItemAtDelimiter(frame)) {
+        // an item frame — the sole terminator for undefined-length items, and a
+        // stray-delimiter guard strictly inside a defined-length item's bound (the
+        // at-bound case was finalized above). A real element never has group FFFE.
+        if (this.terminateItemAtDelimiter(frame)) {
             return;
         }
-        if (frame.undefinedLength) {
-            if (this.stream.remaining < 8) {
-                this.warn('missing-item-delimiter', 'eof encountered before finding item delimiter (FFFE,E00D) in item of undefined length');
-                this.stream.seek(this.stream.remaining);
-                this.finalizeDataSet(frame, this.stream.position, this.stream.position);
-                return;
-            }
-            this.readElement(frame);
-            return;
-        }
-        if (this.stream.position >= frame.bound) {
+        if (frame.undefinedLength && this.stream.remaining < 8) {
+            this.warn('missing-item-delimiter', 'eof encountered before finding item delimiter (FFFE,E00D) in item of undefined length');
+            this.stream.seek(this.stream.remaining);
             this.finalizeDataSet(frame, this.stream.position, this.stream.position);
             return;
         }

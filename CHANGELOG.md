@@ -6,6 +6,16 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- A defined-length sequence item ending at its exact bound no longer consumes an
+  ancestor's item-delimitation item (`FFFE,E00D`). The bound-completion check now
+  runs before the delimiter peek, so a conformant nested structure (a
+  defined-length item flush against an enclosing undefined-length item's
+  delimiter) can no longer be mis-tokenized into structural corruption — one item
+  swallowing its sibling, with data misattributed and only soft warnings (MedFusion
+  field review D1).
+
 ### Added
 
 - `serializeParsed` now accepts `{ allowPartial }` and refuses (typed

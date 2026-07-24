@@ -3,6 +3,7 @@ import { ByteStream } from './byteStream';
 import type { EncapsulatedElement, SequenceElement, UnknownElement, ValueElement } from './element';
 import { readElements } from './tokenizer';
 import { tagFromString } from './tag';
+import { concat, evenPad, explicitEl, item, sqExplicit, sqExplicitUndefined, undefinedLengthItem } from '../tests/helpers/p10';
 
 // Ported from legacy readSequenceItemsExplicit_test.js,
 // readSequenceItemsImplicit_test.js and the sequence/UN halves of
@@ -662,6 +663,30 @@ describe('readElements — malformed-input containment (adversarial review #1-#7
         const element = sq_(result.elements.get(tagFromString('x00081140')));
         expect(element.items[0]?.dataSet.element('x00080018')).toBeDefined();
         expect(element.items[0]?.dataSet.element('xfffee00d')).toBeUndefined();
+    });
+
+    it('D1: a defined-length item ending at its exact bound does not consume an ancestor item delimiter', () => {
+        // Conformant, mixed length encodings (explicit LE, so SQ is self-describing).
+        // Nesting: outer SQ (undefined) → item A (undefined) whose last element is
+        // a defined-length SQ B → defined-length item C ending exactly at B's bound
+        // → A's FFFE,E00D → item D. The bytes right after C are A's item delimiter;
+        // a defined-length item at its bound must NOT eat them (review D1).
+        const cEl = explicitEl('00090010', 'SH', evenPad('C'));
+        const sqB = sqExplicit('00110011', [cEl]); // defined SQ; item C fills it exactly
+        const aEl = explicitEl('00080018', 'UI', evenPad('1.2', '\0'));
+        const itemA = undefinedLengthItem(concat([aEl, sqB])); // SQ B is A's last element
+        const dEl = explicitEl('00100010', 'PN', evenPad('DOE'));
+        const itemD = item(concat([dEl]));
+        const outer = sqExplicitUndefined('00081115', [itemA, itemD]);
+        const result = readElements(new ByteStream(outer, { littleEndian: true }), { explicitVr: true });
+        expect(result.error).toBeUndefined();
+        const seq = sq_(result.elements.get(tagFromString('x00081115')));
+        expect(seq.items).toHaveLength(2); // not 1 — item D is its own item, not swallowed into A
+        const a = seq.items[0]?.dataSet;
+        expect(a?.element('x00080018')).toBeDefined();
+        expect(a?.element('x00110011')).toBeDefined();
+        expect(a?.element('xfffee000')).toBeUndefined(); // item D's header not misattributed into A
+        expect(seq.items[1]?.dataSet.element('x00100010')).toBeDefined(); // D's contents attributed to D
     });
 
     it('#2: a defined-length encapsulated basic offset table overrunning the value falls back to opaque', () => {
