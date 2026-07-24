@@ -23,12 +23,14 @@ external soak). Everything below the "prepared" line is done; work the blockers 
     - `_p10ToJson.ts` import → `@ubercode/dicom-parser/compat` (this part _is_ one line, per
       `docs/migration-v1.md`).
     - `_boundedRead` (dcmtk.js's memory feature, dcmtk.js#35) must be **rewritten against the
-      core bounded head-read API** (fork #59). The legacy `dicom-parser` internals it relied on
-      are gone by design — `readPart10Header` is not on the `/compat` namespace in v1 shape, and
-      truncated defined-length values now clamp with an `unexpected-eof` warning instead of
-      throwing with an oversized extent, so its skip trigger can never fire (fork #58). A naive
-      swap silently disables skipping and reintroduces the full-read memory profile. Alternative:
-      disable it explicitly (`boundedRead: false`) and note the memory regression.
+      core bounded head-read API** (fork #59, `parseHeadAsync`). The legacy `dicom-parser`
+      internals it relied on are gone by design — `readPart10Header` is now exported on `/compat`
+      but returns the **core `Part10Header`** (`dataSetPosition`/`transferSyntax`/`meta`), not v1's
+      meta `DataSet`; and truncated defined-length values now clamp with an `unexpected-eof`
+      warning instead of throwing with an oversized extent, so its old skip trigger can never fire
+      (fork #58). A naive swap silently disables skipping and reintroduces the full-read memory
+      profile. Alternative: disable it explicitly (`boundedRead: false`) and note the memory
+      regression.
     - Run dcmtk.js's 198-file DCMTK differential + its forced-bounded differential + perf suite.
       Keep the `engine`/`dcmtkFallback` safety net.
     - **Adoption check (fork #60):** run the dcmtk.js `bad/` corpus through the swapped engine
