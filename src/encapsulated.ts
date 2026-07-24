@@ -14,7 +14,7 @@ import type { ByteStream } from './byteStream';
 import type { EncapsulatedElement, Fragment } from './element';
 import { DicomError } from './errors';
 import type { ElementHeader } from './elementHeader';
-import { TAG_ITEM, TAG_SEQUENCE_DELIMITATION, UNDEFINED_LENGTH, tagToString } from './tag';
+import { TAG_ITEM, TAG_ITEM_DELIMITATION, TAG_SEQUENCE_DELIMITATION, UNDEFINED_LENGTH, tagToString } from './tag';
 
 function readBasicOffsetTable(stream: ByteStream, end: number): number[] {
     const itemTag = stream.readTag();
@@ -129,28 +129,47 @@ export function scanEncapsulatedPixelData(stream: ByteStream, header: ElementHea
     };
 }
 
+type ScanResult = { contentEnd: number; endOffset: number; missingDelimiter: boolean };
+
+/** Consumes a delimiter tag that terminates a pixel sequence, or returns undefined. */
+function delimiterTermination(stream: ByteStream, header: ElementHeader, itemTag: number, itemStart: number): ScanResult | undefined {
+    if (itemTag === TAG_SEQUENCE_DELIMITATION) {
+        const delimiterLength = stream.readUint32();
+        if (delimiterLength !== 0) {
+            stream.warnings.push({
+                code: 'nonzero-delimiter-length',
+                message: `sequence delimiter of ${tagToString(header.tag)} has non-zero length ${delimiterLength}; treated as zero`,
+                offset: itemStart + 4,
+            });
+        }
+        return { contentEnd: itemStart, endOffset: stream.position, missingDelimiter: false };
+    }
+    if (itemTag === TAG_ITEM_DELIMITATION) {
+        // A pixel sequence wrongly closed by an item delimiter (FFFE,E00D) instead
+        // of a sequence delimiter (FFFE,E0DD): consume it as the terminator rather
+        // than surfacing a bogus zero-length fragment (parity with the sequence
+        // path and DCMTK's EC_ItemEnd handling).
+        stream.readUint32();
+        stream.warnings.push({
+            code: 'missing-sequence-delimiter',
+            message: `pixel data ${tagToString(header.tag)} closed by an item delimiter (FFFE,E00D) instead of a sequence delimiter (FFFE,E0DD); treated as the sequence end`,
+            offset: itemStart,
+        });
+        return { contentEnd: itemStart, endOffset: stream.position, missingDelimiter: false };
+    }
+    return undefined;
+}
+
 /** Scans fragment items up to `bound`. `missingDelimiter` marks that it ran out
  * to the bound without a closing FFFE,E0DD (or a terminal fragment). */
-function scanFragments(
-    stream: ByteStream,
-    header: ElementHeader,
-    fragments: Fragment[],
-    bound: number
-): { contentEnd: number; endOffset: number; missingDelimiter: boolean } {
+function scanFragments(stream: ByteStream, header: ElementHeader, fragments: Fragment[], bound: number): ScanResult {
     const baseOffset = stream.position;
     while (bound - stream.position >= 8) {
         const itemStart = stream.position;
         const itemTag = stream.readTag();
-        if (itemTag === TAG_SEQUENCE_DELIMITATION) {
-            const delimiterLength = stream.readUint32();
-            if (delimiterLength !== 0) {
-                stream.warnings.push({
-                    code: 'nonzero-delimiter-length',
-                    message: `sequence delimiter of ${tagToString(header.tag)} has non-zero length ${delimiterLength}; treated as zero`,
-                    offset: itemStart + 4,
-                });
-            }
-            return { contentEnd: itemStart, endOffset: stream.position, missingDelimiter: false };
+        const terminated = delimiterTermination(stream, header, itemTag, itemStart);
+        if (terminated !== undefined) {
+            return terminated;
         }
         const length = readFragmentLength(stream, header, bound);
         fragments.push({ offset: itemStart - baseOffset, position: stream.position, length });

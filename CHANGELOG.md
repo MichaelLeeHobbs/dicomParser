@@ -54,6 +54,11 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ### Fixed
 
+- Encapsulated pixel data wrongly closed by an item delimiter (`FFFE,E00D`) instead
+  of a sequence delimiter (`FFFE,E0DD`) no longer surfaces the stray delimiter as a
+  phantom zero-length fragment; it terminates the pixel sequence cleanly with a
+  `missing-sequence-delimiter` warning (parity with the sequence path and DCMTK's
+  `EC_ItemEnd` handling).
 - An unrecognized explicit VR consisting of two uppercase letters is now read with
   the 4-byte extended-length form (a _future_ VR) instead of the 2-byte short form.
   The DICOM committee reserved all future VRs to the extended-length form, so the
