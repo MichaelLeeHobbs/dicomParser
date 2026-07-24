@@ -4,6 +4,11 @@ Everything a fresh session needs that is not obvious from the legacy source. Com
 from the `@ubercode/dcmtk` `dicom2json` project (which shipped a production JSON-model layer on
 top of `dicom-parser@1.8.21`) and from the Phase 0 scaffold work.
 
+> **Note:** the `legacy/` and `legacy-test/` directories were removed once the port completed
+> (before 2.0.0 final). The module paths below refer to the upstream `dicom-parser@1.8.21` source,
+> still available in this repo's git history and at
+> [cornerstonejs/dicomParser](https://github.com/cornerstonejs/dicomParser).
+
 ## Legacy module map (`legacy/`, ~2,550 lines)
 
 | Legacy module                                                                                              | Role                                        | Rewrite notes                                                                                                                                |

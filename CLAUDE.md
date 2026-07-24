@@ -6,9 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 `@ubercode/dicom-parser` — a ground-up TypeScript remake of cornerstonejs/dicomParser that
 **parses and writes** DICOM Part-10 with zero runtime dependencies. This repo is a true GitHub
-fork; `legacy/` and `legacy-test/` hold the original JS source and karma tests as porting
-reference (excluded from all tooling; deleted before 2.0.0 final). `testImages/` holds binary
-DICOM fixtures.
+fork. The original JS source and karma tests (`legacy/` and `legacy-test/`) served as the
+porting reference and were removed once the port completed; the 1.x history lives in
+`legacy-CHANGELOG.md` and `docs/porting-notes.md`. `testImages/` holds binary DICOM fixtures.
 
 **PLAN.md is the governing document** — progress tracker, phases, the 13-item requirements
 backlog, verification gates, and the 2.0.0 definition-of-done checklist. Update its §0 tracker

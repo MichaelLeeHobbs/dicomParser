@@ -226,7 +226,8 @@ off here as they land.
 
 **Repo hygiene**
 
-- [ ] `legacy/` and `legacy-test/` deleted (port complete); testImages/ retained
+- [x] `legacy/` and `legacy-test/` deleted (port complete); testImages/ retained. The 1.x
+      source history remains in git and is mapped in `docs/porting-notes.md`.
 - [x] CONTRIBUTING.md (dev setup, gates, fixture-adding guide, security-sensitive areas)
 - [x] Issue templates (bug w/ sample-file guidance, feature); PR template with gate checklist
 - [x] Branch protection on master (CI required — all five checks)
