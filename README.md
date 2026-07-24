@@ -172,3 +172,8 @@ reporting process. Please use private vulnerability reporting — never public i
 MIT. Original work (c) Chris Hafey and cornerstonejs/dicomParser contributors; this fork
 continues the version lineage as 2.x. The legacy 1.x changelog is preserved in
 [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
+
+`@ubercode/dicom-parser` (2.x) continues the history of the `dicom-parser` npm package
+(upstream 1.8.21, dormant since Oct 2023) — they are **separate packages**. For the full
+lineage, the reasoning behind the 2.x major, and migration/deprecation guidance for
+`dicom-parser` consumers, see [docs/version-lineage.md](./docs/version-lineage.md).

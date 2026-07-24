@@ -221,8 +221,8 @@ off here as they land.
 - [x] npm Trusted Publishing configured (repo + publish.yml) — no tokens anywhere (done 2026-07-23; tag push withheld pending explicit go-ahead)
 - [ ] Provenance badge visible on npm after first CI-driven publish
 - [ ] `latest` dist-tag correct after 2.0.0 final (overwrites the forced alpha `latest`). **Interim (field review D4):** `npm view` shows `latest = 2.0.0-alpha.0`, so a plain install pulls an alpha — run `npm deprecate @ubercode/dicom-parser@2.0.0-alpha.0 "prerelease — pin explicitly"` now, and repoint `latest` when rc.1 publishes.
-- [ ] Version lineage documented: 2.x here vs upstream 1.x; deprecation guidance for
-      `dicom-parser` consumers
+- [x] Version lineage documented: 2.x here vs upstream 1.x; deprecation guidance for
+      `dicom-parser` consumers (`docs/version-lineage.md`, linked from the README)
 
 **Repo hygiene**
 
