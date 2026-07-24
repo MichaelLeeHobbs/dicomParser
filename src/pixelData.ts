@@ -115,8 +115,14 @@ function isEndOfImageMarker(bytes: Uint8Array, position: number): boolean {
 }
 
 function isFragmentEndOfImage(bytes: Uint8Array, fragment: Fragment): boolean {
-    // check the last two and last three bytes — odd-length fragments are padded
-    return isEndOfImageMarker(bytes, fragment.position + fragment.length - 2) || isEndOfImageMarker(bytes, fragment.position + fragment.length - 3);
+    // check the last two and last three bytes — odd-length fragments are padded.
+    // Guard against short fragments so the probe never reads before the fragment
+    // start (a <3-byte fragment otherwise corrupts the generated BOT — review §3).
+    if (fragment.length < 2) {
+        return false;
+    }
+    const end = fragment.position + fragment.length;
+    return isEndOfImageMarker(bytes, end - 2) || (fragment.length >= 3 && isEndOfImageMarker(bytes, end - 3));
 }
 
 /**
@@ -162,22 +168,40 @@ interface ViewSpec {
     readonly length: number;
     readonly bitsAllocated: number;
     readonly signed: boolean;
+    /** Dataset byte order; big-endian 16-bit pixels are byte-swapped to host order. */
+    readonly littleEndian: boolean;
+}
+
+/** Builds a 16-bit view, byte-swapping when the source is big-endian. */
+function view16(bytes: Uint8Array, spec: ViewSpec, count: number): PixelDataView {
+    const { offset, signed, littleEndian } = spec;
+    const absolute = bytes.byteOffset + offset;
+    // Typed arrays use host (little) endianness. Big-endian pixel data must be
+    // byte-swapped into a fresh buffer first, or the samples come out swapped
+    // (review §3). Aligned little-endian data views in place; otherwise copy.
+    if (!littleEndian) {
+        const swapped = new Uint8Array(count * 2);
+        for (let i = 0; i < count; i++) {
+            swapped[i * 2] = bytes[offset + i * 2 + 1] as number;
+            swapped[i * 2 + 1] = bytes[offset + i * 2] as number;
+        }
+        return signed ? new Int16Array(swapped.buffer, 0, count) : new Uint16Array(swapped.buffer, 0, count);
+    }
+    if (absolute % 2 !== 0) {
+        const copy = bytes.slice(offset, offset + count * 2);
+        return signed ? new Int16Array(copy.buffer, 0, count) : new Uint16Array(copy.buffer, 0, count);
+    }
+    return signed ? new Int16Array(bytes.buffer, absolute, count) : new Uint16Array(bytes.buffer, absolute, count);
 }
 
 function viewFor(bytes: Uint8Array, spec: ViewSpec): PixelDataView {
     const { offset, length, bitsAllocated, signed } = spec;
-    const bytesPer = bitsAllocated / 8;
-    const count = Math.floor(length / bytesPer);
-    const absolute = bytes.byteOffset + offset;
+    const count = Math.floor(length / (bitsAllocated / 8));
     if (bitsAllocated === 8) {
+        const absolute = bytes.byteOffset + offset;
         return signed ? new Int8Array(bytes.buffer, absolute, count) : new Uint8Array(bytes.buffer, absolute, count);
     }
-    if (absolute % bytesPer !== 0) {
-        // typed arrays require aligned offsets; copy to a fresh buffer
-        const copy = bytes.slice(offset, offset + count * bytesPer);
-        return signed ? new Int16Array(copy.buffer, 0, count) : new Uint16Array(copy.buffer, 0, count);
-    }
-    return signed ? new Int16Array(bytes.buffer, absolute, count) : new Uint16Array(bytes.buffer, absolute, count);
+    return view16(bytes, spec, count);
 }
 
 /**
@@ -202,5 +226,5 @@ export function nativePixelDataView(dataSet: DicomDataSet): PixelDataView | unde
     if (bitsAllocated !== 8 && bitsAllocated !== 16) {
         throw new DicomError('unsupported', `nativePixelDataView: BitsAllocated ${bitsAllocated} is not supported (8 and 16 are)`);
     }
-    return viewFor(dataSet.bytes, { offset: element.dataOffset, length: element.length, bitsAllocated, signed });
+    return viewFor(dataSet.bytes, { offset: element.dataOffset, length: element.length, bitsAllocated, signed, littleEndian: dataSet.littleEndian });
 }

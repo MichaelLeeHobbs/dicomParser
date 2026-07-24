@@ -8,8 +8,8 @@
 import { DicomDataSet } from './dataSet';
 import { DicomError } from './errors';
 import type { ParseResult } from './parse';
-import { TS_DEFLATED_LE, TS_EXPLICIT_BE, TS_EXPLICIT_LE, TS_GE_PRIVATE_DLX, TS_IMPLICIT_LE } from './parse';
-import { tagToString, toTag, type TagLike } from './tag';
+import { NATIVE_TRANSFER_SYNTAXES, TS_DEFLATED_LE, TS_EXPLICIT_BE, TS_EXPLICIT_LE, TS_GE_PRIVATE_DLX, TS_IMPLICIT_LE } from './parse';
+import { TAG_PIXEL_DATA, tagToString, toTag, type TagLike } from './tag';
 import { encodeDataSet, type EncodeOptions } from './writer';
 import { dataSet as buildDataSet, element, toWriteModel, type WriteDataSet, type WriteElement } from './writeModel';
 
@@ -95,10 +95,39 @@ export function buildMetaGroup(transferSyntax: string, sopClassUid: string, sopI
     return out;
 }
 
+/**
+ * Rejects a transfer syntax that disagrees with the pixel-data payload: a
+ * compressed syntax must carry encapsulated (fragmented) pixel data, and a native
+ * syntax must carry native pixel bytes. Without this a tag-morph flow (parse a
+ * JPEG, modify, writeFile defaulting to Explicit LE) silently emits fragments
+ * under a native syntax — a non-conformant file that still reparses (review D2).
+ */
+function checkTransferSyntaxPayload(dataSet: WriteDataSet, transferSyntax: string): void {
+    const pixelData = dataSet.elements.find(el => el.tag === TAG_PIXEL_DATA);
+    if (pixelData === undefined) {
+        return;
+    }
+    const encapsulated = pixelData.value.kind === 'fragments';
+    const nativeSyntax = NATIVE_TRANSFER_SYNTAXES.has(transferSyntax);
+    if (encapsulated && nativeSyntax) {
+        throw new DicomError(
+            'invalid-argument',
+            `dataset has encapsulated (fragmented) pixel data but transfer syntax ${transferSyntax} is native; pass the source compressed transfer syntax (e.g. options.transferSyntax = parsed.transferSyntax)`
+        );
+    }
+    if (!encapsulated && !nativeSyntax) {
+        throw new DicomError(
+            'invalid-argument',
+            `dataset has native pixel data but transfer syntax ${transferSyntax} is compressed/encapsulated; native pixel data requires a native transfer syntax`
+        );
+    }
+}
+
 function encodedDataSetFor(options: WriteFileOptions, transferSyntax: string): Uint8Array {
     if (transferSyntax === TS_EXPLICIT_BE || transferSyntax === TS_GE_PRIVATE_DLX) {
         throw new DicomError('unsupported', `transfer syntax ${transferSyntax} is read-only; the write path is little-endian`);
     }
+    checkTransferSyntaxPayload(options.dataSet, transferSyntax);
     const explicitVr = transferSyntax !== TS_IMPLICIT_LE;
     const encoded = encodeDataSet(options.dataSet, { explicitVr, ...(options.charset === undefined ? {} : { charset: options.charset }) });
     if (transferSyntax !== TS_DEFLATED_LE) {
