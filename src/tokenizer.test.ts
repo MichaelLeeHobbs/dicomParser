@@ -334,6 +334,26 @@ describe('readElements — encapsulated pixel data', () => {
         expect(element.endOffset).toBe(40);
     });
 
+    it('DCMTK-parity: a pixel sequence closed by an item delimiter (FFFE,E00D) ends cleanly, no phantom fragment', () => {
+        // BOT (empty) + one 4-byte fragment, then FFFE,E00D (wrong) instead of E0DD,
+        // then a root sibling. The stray item delimiter must terminate the pixel
+        // sequence — not surface as a bogus zero-length fragment — and the tail must
+        // survive (parity with the sequence path and DCMTK's EC_ItemEnd).
+        // (7FE0,0010) OB undefined · empty BOT · 4-byte fragment · FFFE,E00D (wrong terminator)
+        const enc = [
+            0xe0, 0x7f, 0x10, 0x00, 0x4f, 0x42, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xfe, 0xff, 0x00, 0xe0, 0x00, 0x00, 0x00, 0x00, 0xfe, 0xff, 0x00, 0xe0,
+            0x04, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0xfe, 0xff, 0x0d, 0xe0, 0x00, 0x00, 0x00, 0x00,
+        ];
+        const sib = [0x10, 0x00, 0x10, 0x00, 0x50, 0x4e, 0x04, 0x00, 0x44, 0x4f, 0x45, 0x20];
+        const stream = streamOf([...enc, ...sib]);
+        const result = readElements(stream, { explicitVr: true, compressedTransferSyntax: true });
+        expect(result.error).toBeUndefined();
+        const element = result.elements.get(tagFromString('x7fe00010')) as EncapsulatedElement;
+        expect(element.fragments.map(f => f.length)).toEqual([4]); // no phantom zero-length fragment
+        expect(result.elements.has(tagFromString('x00100010'))).toBe(true); // the tail survives
+        expect(stream.warnings.some(w => w.code === 'missing-sequence-delimiter')).toBe(true);
+    });
+
     it('parses a populated basic offset table', () => {
         const bytes = [
             0xe0, 0x7f, 0x10, 0x00, 0x4f, 0x42, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xfe, 0xff, 0x00, 0xe0, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
