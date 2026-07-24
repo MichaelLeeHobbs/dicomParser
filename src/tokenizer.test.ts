@@ -715,6 +715,19 @@ describe('readElements — malformed-input containment (adversarial review #1-#7
         expect(stream.warnings.some(w => w.code === 'missing-sequence-delimiter')).toBe(true);
     });
 
+    it('DCMTK-parity: an unknown two-uppercase-letter VR is read with a 4-byte length; the tail survives', () => {
+        // (0009,0010) VR "ZZ" (unknown, uppercase) in the 12-byte long form. Read as
+        // short form, its length would come from the reserved bytes and derail the
+        // rest of the stream. As a future VR (4-byte length), the value and the
+        // following (0010,0010) are read correctly.
+        const el = [0x09, 0x00, 0x10, 0x00, 0x5a, 0x5a, 0, 0, ...u32(4), 0xaa, 0xbb, 0xcc, 0xdd];
+        const sib = [0x10, 0x00, 0x10, 0x00, 0x50, 0x4e, 4, 0, 0x44, 0x4f, 0x45, 0x20];
+        const result = readElements(streamOf([...el, ...sib]), { explicitVr: true });
+        expect(result.error).toBeUndefined();
+        expect(result.elements.get(tagFromString('x00090010'))?.length).toBe(4);
+        expect(result.elements.has(tagFromString('x00100010'))).toBe(true);
+    });
+
     it('#2: a defined-length encapsulated basic offset table overrunning the value falls back to opaque', () => {
         const enc = [0xe0, 0x7f, 0x10, 0x00, 0x4f, 0x42, 0x00, 0x00, ...u32(12), 0xfe, 0xff, 0x00, 0xe0, ...u32(40)];
         const result = readElements(streamOf(enc), { explicitVr: true, compressedTransferSyntax: true });
