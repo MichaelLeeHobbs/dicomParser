@@ -248,11 +248,6 @@ function isBulk(header: ElementHeader, options: HeadOptions): boolean {
     return looked !== undefined && BULK_VRS.has(looked);
 }
 
-/** The VR the walker saw: the file's explicit VR, or `vrLookup` for implicit. */
-function seenVr(header: ElementHeader, options: HeadOptions): string | undefined {
-    return header.vr ?? options.vrLookup?.(header.tag);
-}
-
 /** Records a skipped bulk value and advances past it (clamping at EOF). */
 function skipBulk(walk: Walk, header: ElementHeader): void {
     const dataOffset = walk.offset + header.dataOffset;
@@ -261,8 +256,9 @@ function skipBulk(walk: Walk, header: ElementHeader): void {
         walk.warnings.push({ code: 'unexpected-eof', message: `value of ${tagToString(header.tag)} truncated`, offset: dataOffset });
         length = walk.source.size - dataOffset;
     }
-    const vr = seenVr(header, walk.options);
-    walk.bulk.set(header.tag, { offset: dataOffset, length, encapsulated: false, ...(vr === undefined ? {} : { vr }) });
+    // `header.vr` is already the VR the walker saw — the stream's explicit VR, or
+    // (for implicit) the value `readImplicitElementHeader` stored from `vrLookup`.
+    walk.bulk.set(header.tag, { offset: dataOffset, length, encapsulated: false, ...(header.vr === undefined ? {} : { vr: header.vr }) });
     walk.offset = dataOffset + length;
 }
 
@@ -346,8 +342,7 @@ async function skipEncapsulated(walk: Walk, header: ElementHeader): Promise<void
         at += length === UNDEFINED_LENGTH ? 0 : length;
     }
     at = Math.min(at, walk.source.size);
-    const vr = seenVr(header, walk.options);
-    walk.bulk.set(header.tag, { offset: dataOffset, length: at - dataOffset, encapsulated: true, ...(vr === undefined ? {} : { vr }) });
+    walk.bulk.set(header.tag, { offset: dataOffset, length: at - dataOffset, encapsulated: true, ...(header.vr === undefined ? {} : { vr: header.vr }) });
     walk.offset = at;
 }
 
