@@ -560,6 +560,22 @@ class Tokenizer {
                 this.finalizeSequence(frame, delimiterStart, this.stream.position);
                 return;
             }
+            // Some scanners close an undefined-length sequence with an item
+            // delimiter (FFFE,E00D) instead of the sequence delimiter (FFFE,E0DD).
+            // At a sequence boundary a real item delimiter cannot occur — an item
+            // frame consumes its own — so treat this stray one as the sequence
+            // terminator and recover the rest of the stream instead of derailing
+            // (matches DCMTK's dcmReplaceWrongDelimitationItem).
+            if (this.stream.peekTag() === TAG_ITEM_DELIMITATION) {
+                const delimiterStart = this.stream.position;
+                this.warn(
+                    'missing-sequence-delimiter',
+                    `sequence ${tagToString(frame.header.tag)} closed by an item delimiter (FFFE,E00D) instead of a sequence delimiter (FFFE,E0DD); treated as the sequence end`
+                );
+                this.consumeDelimiter(`item-as-sequence delimiter of ${tagToString(frame.header.tag)}`);
+                this.finalizeSequence(frame, delimiterStart, this.stream.position);
+                return;
+            }
         }
         this.pushItem(frame);
     }
