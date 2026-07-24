@@ -29,6 +29,7 @@ Everything dcmtk.js-class consumers use keeps working: `parseDicom(bytes, option
 | misdetected implicit sequences derail the rest of the file               | element falls back to opaque bytes with a warning                      | upstream #114                                                                 |
 | private implicit undefined-length sequences: items parsed then discarded | items kept                                                             | strictly more information                                                     |
 | parse failures throw `{ exception, dataSet }` object                     | throws a `DicomError` (an `Error`) with `.dataSet` attached            | upstream #46/#277                                                             |
+| a defined-length value overrunning the data throws (rejects the file)    | clamps the value, parses `ok` with an `unexpected-eof` warning (A1)    | salvage-and-warn; the truncated element is still available                    |
 | `untilTag` matches exactly (`===`), misses absent tags                   | first tag ≥ `untilTag` stops the parse                                 | upstream #104/#268                                                            |
 | `attributeTag(tag)` fails on multi-valued AT                             | `attributeTag(tag, index)`                                             | upstream #253                                                                 |
 | `inflater` sniffed a global `pako` when absent                           | `node:zlib` / `DecompressionStream` built in; `inflater` still honored | upstream #270/#125                                                            |
@@ -65,6 +66,25 @@ if (!result.ok) {
 Prefer the `isDicomError(err)` guard over `err instanceof DicomError` (robust
 across the dual ESM/CJS build).
 
+**Truncation is a warning, not an error (divergence A1).** A file whose last
+defined-length value overruns the buffer parses **successfully** — the value is
+clamped and an `unexpected-eof` warning is recorded — where legacy `dicom-parser`
+threw. Consumers whose flow keys on parse **errors** (quarantine, repair/reroute)
+must inspect `result.warnings` (or `DataSet` warnings on the compat side) to catch
+these; a successful parse no longer means "complete input". There is **no
+strict-reject mode**: the never-throw contract and structured warnings are the
+model, and a mode that throws on `unexpected-eof` would re-introduce the
+exception-driven control flow the rewrite removed. If you truly need rejection,
+check for the warning and reject in your own code:
+
+```ts
+const result = parse(bytes);
+const truncated = result.warnings.some(w => w.code === 'unexpected-eof');
+if (truncated) {
+    /* treat as you treated the legacy throw */
+}
+```
+
 ### Known limits of the compat façade
 
 - Deprecated v1 helpers that no consumer we measured uses (`sharedCopy`, `alloc`,
@@ -72,3 +92,9 @@ across the dual ESM/CJS build).
   reproduced; equivalents exist in the core API (`readEncapsulatedImageFrame`,
   `readEncapsulatedPixelDataFromFragments`, `createJpegBasicOffsetTable`).
 - Explicit big endian remains read-only (as in v1; the write path is new and LE-only).
+- `readPart10Header` is exposed on the compat namespace, but returns the **core**
+  `Part10Header` (`{ meta, transferSyntax, dataSetPosition, warnings, error, ... }`),
+  not v1's meta `DataSet`. `dataSetPosition` (the first dataset byte) and
+  `transferSyntax` are the fields a bounded head-read needs; `meta` is a core
+  `DicomDataSet`. For a bounded/streaming head-read, prefer the core head-read API
+  (fork #59) over rebuilding one on top of this.

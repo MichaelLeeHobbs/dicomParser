@@ -5,30 +5,39 @@ external soak). Everything below the "prepared" line is done; work the blockers 
 
 ## Prepared (in-repo, done)
 
-- Version staged at `2.0.0-rc.1` (`package.json` + `src/version.ts`), CHANGELOG entry ready.
-- `npm pack --dry-run` clean; ESM+CJS+DTS build with `/compat` subpath.
-- All quality gates green: 615 tests, coverage ≥ thresholds, fuzz, byte-identical
-  round-trip corpus, 199-file legacy differential (local), dcmdump acceptance (local),
-  perf baseline recorded.
+- **`2.0.0-rc.1` published** to npm under the `rc` dist-tag (with provenance); GitHub
+  Release created; npm Trusted Publishing configured; the `2.0.0-alpha.0` release
+  deprecated. `npm pack --dry-run` clean; ESM+CJS+DTS build with `/compat` subpath; `attw`
+  clean.
+- All quality gates green in CI: the full unit/fixture suite plus the environment-gated
+  corpus differential, `dcm2xml` oracle, `dcmdump` round-trip, and browser smoke suite (the
+  CI `Test`/`Acceptance`/`Browser smoke` jobs); coverage ≥ thresholds; fuzz; byte-identical
+  round-trip corpus; perf baseline (`docs/benchmark.md`). (Test counts move with every PR —
+  read them off CI rather than hardcoding here.)
+- Repo hygiene done: `legacy/`/`legacy-test/` removed, CONTRIBUTING + issue/PR templates +
+  branch protection in place, TypeDoc site on GitHub Pages.
 
 ## Blockers, in order
 
-1. **npm Trusted Publishing** (one-time, manual, ~2 min): on npmjs.com → package
-   `@ubercode/dicom-parser` → Settings → Trusted Publishing → add GitHub repo
-   `MichaelLeeHobbs/dicomParser`, workflow `publish.yml`. Until then tag-push publishes
-   fail at `npm publish`.
-2. **Tag `v2.0.0-rc.1`**: `git tag v2.0.0-rc.1 && git push origin v2.0.0-rc.1` — the
-   publish workflow derives the `rc` dist-tag and creates the GitHub Release.
-   (Tags intentionally not pushed by the overnight run.)
-3. **GitHub Pages** (one-time): repo Settings → Pages → Source: GitHub Actions. The
-   `docs.yml` workflow then publishes the TypeDoc site on every master push.
-4. **dcmtk.js swap** (cross-repo): in dcmtk.js, change `_p10ToJson.ts`'s import to
-   `@ubercode/dicom-parser/compat` (one-line diff per docs/migration-v1.md), update the
-   dependency, run its 198-file DCMTK differential + perf suite. Keep the
-   `engine`/`dcmtkFallback` machinery as the safety net.
-5. **d-dart soak**, then `v2.0.0` final (fixes the forced-`latest` alpha dist-tag).
-6. Post-final repo hygiene (§9): delete `legacy/` + `legacy-test/`, CONTRIBUTING.md,
-   issue/PR templates, branch protection on master, browser-mode smoke suite.
+1. **dcmtk.js swap** (cross-repo) — **not a one-line diff**:
+    - `_p10ToJson.ts` import → `@ubercode/dicom-parser/compat` (this part _is_ one line, per
+      `docs/migration-v1.md`).
+    - `_boundedRead` (dcmtk.js's memory feature, dcmtk.js#35) must be **rewritten against the
+      core bounded head-read API** (fork #59, `parseHeadAsync`). The legacy `dicom-parser`
+      internals it relied on are gone by design — `readPart10Header` is now exported on `/compat`
+      but returns the **core `Part10Header`** (`dataSetPosition`/`transferSyntax`/`meta`), not v1's
+      meta `DataSet`; and truncated defined-length values now clamp with an `unexpected-eof`
+      warning instead of throwing with an oversized extent, so its old skip trigger can never fire
+      (fork #58). A naive swap silently disables skipping and reintroduces the full-read memory
+      profile. Alternative: disable it explicitly (`boundedRead: false`) and note the memory
+      regression.
+    - Run dcmtk.js's 198-file DCMTK differential + its forced-bounded differential + perf suite.
+      Keep the `engine`/`dcmtkFallback` safety net.
+    - **Adoption check (fork #60):** run the dcmtk.js `bad/` corpus through the swapped engine
+      and diff `ok`/`err` outcomes vs legacy. Truncated/overrunning files now parse `ok` with an
+      `unexpected-eof` warning (divergence A1) where legacy threw — review each flip against any
+      error-keyed flow (quarantine, repair/reroute) in dcmtk.js and d-dart (cf. dcmtk.js#34).
+2. **d-dart soak**, then `v2.0.0` final — repoints `latest` off the alpha dist-tag.
 
 ## Phase 7 (optional)
 
