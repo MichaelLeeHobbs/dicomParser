@@ -6,6 +6,18 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- **Bounded / streaming head-read** (`parseHeadAsync`): parses a Part-10 file's
+  metadata over a `RangeReader` (`{ read(offset, length), size }` — an in-memory
+  buffer, an `fs` descriptor, or S3 ranged GETs) while **skipping bulk value bytes**
+  (PixelData and other OB/OW/OD/OF/OL/OV values, plus explicit UN and vrLookup-bulk
+  implicit values). Skipped values are reported in `HeadResult.bulk` as
+  file-absolute ranges to fetch on demand; every other element parses exactly as a
+  whole-file `parse`. ~83% fewer bytes read across the fixture corpus (98%+ on
+  pixel-data-dominant files). Deflated transfer syntax is read whole (not seekable).
+  The core home for dcmtk.js's bounded head-read (fork #59; unblocks the swap, #58).
+
 ## [2.0.0-rc.1] — 2026-07-24
 
 The ground-up TypeScript rewrite over `dicom-parser` 1.8.21, plus the post-rewrite
