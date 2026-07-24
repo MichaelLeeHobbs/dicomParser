@@ -314,9 +314,41 @@ deep: **sequence / item / delimiter semantics** (`dcitem.cc`, `dcsequen.cc`).
   delimiters (DCMTK is strict unless `dcmIgnoreParsingErrors`/`dcmReplaceWrongDelimitationItem`);
   the fork clamps an over-long element to the item bound where DCMTK errors/skips.
 
-Also added a **`dcm2xml` read differential** as an independent CI oracle (PR pending): fork vs
-DCMTK XML over the corpus, element-for-element on tag set, byte `len`, VR, and string/integer
-values — **zero divergences**. `dcm2xml` (not `dcm2json`) is the trusted tool.
+A **`dcm2xml` read differential** was added as an independent CI oracle (PR #48): fork vs DCMTK
+XML over the corpus, element-for-element on tag set, byte `len`, VR, and string/integer values —
+**zero divergences**. `dcm2xml` (not `dcm2json`) is the trusted tool.
 
-Breadth beyond this subsystem (VR table, length/overflow, encapsulated pixel data, ISO 2022
-charset) is open — decide whether to continue per the value found here.
+The comparison then proceeded subsystem-by-subsystem. Net: the parser is very solid — four real
+(edge-case) bugs found and fixed, the rest matching DCMTK.
+
+1. **Sequence / item / delimiter** (`dcitem.cc`, `dcsequen.cc`) — validated D1 fix + exclusive
+   stopAt; **fixed** wrong-delimiter sequence recovery (PR #47).
+2. **VR table & length/reserved bytes** (`dcvr.cc`, `readTagAndLength`) — the 13 long-form and 7
+   charset-affected VR sets match DCMTK exactly. **Fixed:** an unknown two-uppercase-letter VR is
+   now read with the 4-byte extended-length form (future VR; DCMTK `EVR_UNKNOWN`) instead of
+   short-form, which would derail the stream (PR #49).
+3. **Encapsulated pixel data** (`dcpixseq.cc`) — structure matches; DCMTK stricter on a non-item
+   tag (fork tolerates it, by design). **Fixed:** a pixel sequence closed by an item delimiter no
+   longer surfaces a phantom zero-length fragment (PR #50).
+4. **ISO 2022 charset code extensions** (`dcspchrs.cc`) — escape/decoder tables and GL/GR routing
+   match DCMTK; passes all 12 PS3.5 vectors. **Fixed:** reset G0/G1 at delimiters for single-byte
+   sets (DCMTK `checkDelimiters`), closing a non-conformant single-byte leak; correctly suppressed
+   under multi-byte G0 (JIS X 0208/0212), matching DCMTK (PR #51). (Corrected an initial mis-read:
+   DCMTK does **not** reset under active kanji, so the fork already matched there.)
+5. **Transfer-syntax registry** (`dcxfer.cc`) — **clean.** The fork's rule-based classification
+   (implicit only for `…1.2`; BE only for explicit-BE; native = a 4-UID set; else compressed)
+   correctly handles every real transfer syntax. "Virtual Big Endian Implicit" has no UID
+   (DCMTK-internal); "Deflated Image Frame Compression" is encapsulated (per-frame), which the fork
+   classifies correctly. No fix needed.
+6. **Value parsing / string trimming** (`dcbytstr.cc`) — **clean.** DCMTK's `normalizeString`
+   (leading+trailing per part; trailing-only for ST/LT/UT; strips trailing NUL) matches the fork's
+   `string()` / `text()` split; the dcm2xml oracle validates DS/IS/PN values on the corpus. Only
+   minor differences (JS `.trim()` strips all whitespace vs DCMTK's space-only) with no real-data
+   impact.
+
+**Documented design difference (deferred to 2.1):** PN-specific `^`/`=` delimiter resets under
+single-byte code extensions need the VR (not available in the charset decoder); the common
+Japanese PN case is multi-byte, where neither resets. Low impact.
+
+Remaining unexplored areas (file-meta/preamble edge cases, the dictionary — the fork is
+dictionary-free by design) are lower value; the two most recent subsystems came back clean.
