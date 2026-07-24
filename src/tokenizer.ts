@@ -46,7 +46,12 @@ import {
 export interface StopAtOption {
     /** Parsing stops at the first root-level element with tag ≥ this tag. */
     readonly tag: TagLike;
-    /** Fully parse the triggering element before stopping (default `true`). */
+    /**
+     * Fully parse the triggering element before stopping (default `false`).
+     * The default is exclusive so a metadata fast path (`stopAt` PixelData) does
+     * not walk the pixel payload when the flag is omitted; pass `true` to include
+     * the triggering element. (The v1 compat façade pins `true` for fidelity.)
+     */
     readonly inclusive?: boolean;
 }
 
@@ -136,7 +141,7 @@ class Tokenizer {
         this.stream = stream;
         this.vrLookup = options.vrLookup;
         this.stopTag = options.stopAt === undefined ? undefined : toTag(options.stopAt.tag);
-        this.stopInclusive = options.stopAt?.inclusive ?? true;
+        this.stopInclusive = options.stopAt?.inclusive ?? false;
         this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
         this.maxElements = options.maxElements ?? DEFAULT_MAX_ELEMENTS;
         this.compressedTransferSyntax = options.compressedTransferSyntax ?? false;

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import dicomParser, { DataSet, isPrivateTag, parseDicom, type Element } from './compat';
 import { DicomError } from './errors';
+import { VERSION } from './version';
 import { TS, concat, encapsulatedPixelData, explicitEl, implicitEl, latin1, p10, p10Deflated, sqExplicit } from '../tests/helpers/p10';
 
 // Phase 4 gate: the v1 surface dcmtk.js's _p10ToJson consumes, exercised the
@@ -129,7 +130,7 @@ describe('compat namespace object', () => {
         expect(dicomParser.parseDA('20140329')?.year).toBe(2014);
         expect(dicomParser.parseTM('081236')?.minutes).toBe(12);
         expect(dicomParser.parsePN('F^G')?.givenName).toBe('G');
-        expect(dicomParser.version).toBe('2.0.0');
+        expect(dicomParser.version).toBe(VERSION);
     });
 });
 

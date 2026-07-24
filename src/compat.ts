@@ -48,6 +48,7 @@ import { readPart10Header } from './part10';
 import { isPrivateTag as corePrivate, tagFromString, tagToString, toTag, type Tag } from './tag';
 import { isStringVr } from './vr';
 import { parseDA, parsePN, parseTM } from './valueParsers';
+import { VERSION } from './version';
 
 /** A v1-shaped sequence item. */
 export interface Item {
@@ -330,7 +331,7 @@ const dicomParser = {
     parseDA,
     parseTM,
     parsePN,
-    version: '2.0.0',
+    version: VERSION,
 };
 
 export default dicomParser;

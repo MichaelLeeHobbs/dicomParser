@@ -61,7 +61,9 @@ if (!result.ok) {
 ```
 
 `DicomError.code` values: `invalid-argument`, `buffer-overread`, `not-dicom`,
-`malformed`, `unsupported`, `no-inflater`, `depth-exceeded`.
+`malformed`, `unsupported`, `no-inflater`, `depth-exceeded`, `limit-exceeded`.
+Prefer the `isDicomError(err)` guard over `err instanceof DicomError` (robust
+across the dual ESM/CJS build).
 
 ### Known limits of the compat façade
 

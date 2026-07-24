@@ -10,6 +10,7 @@
  */
 
 import { ByteStream } from './byteStream';
+import { DEFAULT_CHARSET_CONTEXT } from './charset';
 import { DicomDataSet } from './dataSet';
 import { DicomError, type ParseWarning } from './errors';
 import { readElements } from './tokenizer';
@@ -116,6 +117,9 @@ function readMetaGroup(bytes: Uint8Array, metaPosition: number, warnings: ParseW
         ...(options.maxDepth === undefined ? {} : { maxDepth: options.maxDepth }),
     });
     const meta = new DicomDataSet(bytes, true, result.elements);
+    // Group 2 is always the default repertoire; give meta a context so its string
+    // reads use the fast decode path instead of the per-byte fallback (review §3).
+    meta.applyCharset(DEFAULT_CHARSET_CONTEXT);
     const tsElement = result.elements.get(TAG_TRANSFER_SYNTAX_UID);
     let transferSyntax: string | undefined;
     let error = result.error;
