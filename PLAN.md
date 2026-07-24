@@ -214,7 +214,7 @@ off here as they land.
 - [x] Fuzz suite (fast-check + corpus mutation) in CI — crash/hang/OOM = fail
 - [x] Bulk-parse + header-only benchmark vs recorded baseline (docs/benchmark.md; ~17% faster than 1.8.21 bulk, core beats legacy on the header-only hot path) — all benchmark assertions are local (`pnpm run bench`, `BENCH=1`-gated); **CI runs no benchmarks** (field review D5)
 - [x] Round-trip gates: byte-identical re-serialization corpus (CI) + DCMTK accepts writer output (now a CI `acceptance` job that apt-installs DCMTK and runs the dcmdump gate under `REQUIRE_DCMTK=1`, PR #22) + fork-vs-1.8.21 differential over the in-repo corpus in the default CI job
-- [ ] Browser smoke suite (Vitest browser mode) — parse + DecompressionStream path
+- [x] Browser smoke suite (Vitest browser mode, Playwright/Chromium) — sync `parse`, `parseAsync` via `DecompressionStream`, and a no-Node-globals check; runs in CI (`Browser smoke` job) via bundled chromium, and locally against system Chrome
 
 **Release engineering**
 

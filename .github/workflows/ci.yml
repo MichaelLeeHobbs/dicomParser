@@ -58,6 +58,22 @@ jobs:
               env:
                   REQUIRE_DCMTK: '1'
 
+    browser:
+        name: Browser smoke (Chromium)
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+            - uses: pnpm/action-setup@v6
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: 24
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile
+            - run: pnpm exec playwright install --with-deps chromium
+            - run: pnpm run test:browser
+              env:
+                  BROWSER_CHANNEL: chromium
+
     audit:
         name: Security Audit
         runs-on: ubuntu-latest
