@@ -6,8 +6,38 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- A header-only benchmark (`stopAt` / `untilTag` over a header-dense file, fork vs
+  legacy) — the production hot path the bulk parse bench did not exercise
+  (review D5). `docs/benchmark.md` corrected: CI runs no benchmarks (all are
+  `BENCH=1`-gated).
+- `serializeParsed` now accepts `{ allowPartial }` and refuses (typed
+  `invalid-argument`) a failed, `stopAt`-terminated, or truncation-warned parse
+  by default, so it can no longer silently emit a truncated file (review W7).
+- `ParseOptions.utf8MislabelPromote` — decode values detected as mislabeled
+  UTF-8 under a single-byte charset as UTF-8; a `utf8-mislabel` warning is
+  emitted regardless (review C4). Exported `isCharsetAffectedVr`.
+- A bare `ISO_IR n` term in a code-extension `SpecificCharacterSet` is
+  normalized to `ISO 2022 IR n` (DCMTK-compatible) with a `nonstandard-charset`
+  warning (review C5).
+- CI now runs the acceptance oracles: the fork-vs-`dicom-parser@1.8.21`
+  differential over the in-repo corpus, and a DCMTK `dcmdump` writer-acceptance
+  job (review B1). Deepened differential comparator; from-model numeric-writer
+  round-trip coverage (review B2/B3/B4).
+
 ### Fixed
 
+- `package.json` `exports` now nests `types` under the `import`/`require`
+  conditions, so CJS TypeScript consumers resolve the emitted `.d.cts` files
+  instead of the ESM-flavored `.d.ts` (fixes TS1479 "masquerading as ESM"). An
+  `attw` (`@arethetypeswrong/cli`) check is wired into CI and `prepublishOnly`
+  (review D3).
+- `engines.node` raised to `>=20.16`: the synchronous inflate path needs
+  `process.getBuiltinModule` (Node ≥ 20.16), so deflated files fail with
+  `no-inflater` on 20.0–20.15 despite zlib existing (review §3).
+- Corrected the deflate-bomb default-cap documentation (TSDoc + README) to 256 MiB
+  to match `DEFAULT_MAX_INFLATED_BYTES`; a test now pins the value (review §3).
 - `writeFile` now rejects a transfer-syntax / pixel-data mismatch: encapsulated
   (fragmented) pixel data requires a compressed transfer syntax, and native pixel
   data requires a native one. A tag-morph flow (parse a JPEG, `modifyDataSet`,
@@ -39,22 +69,6 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
   delimiter) can no longer be mis-tokenized into structural corruption — one item
   swallowing its sibling, with data misattributed and only soft warnings (MedFusion
   field review D1).
-
-### Added
-
-- `serializeParsed` now accepts `{ allowPartial }` and refuses (typed
-  `invalid-argument`) a failed, `stopAt`-terminated, or truncation-warned parse
-  by default, so it can no longer silently emit a truncated file (review W7).
-- `ParseOptions.utf8MislabelPromote` — decode values detected as mislabeled
-  UTF-8 under a single-byte charset as UTF-8; a `utf8-mislabel` warning is
-  emitted regardless (review C4). Exported `isCharsetAffectedVr`.
-- A bare `ISO_IR n` term in a code-extension `SpecificCharacterSet` is
-  normalized to `ISO 2022 IR n` (DCMTK-compatible) with a `nonstandard-charset`
-  warning (review C5).
-- CI now runs the acceptance oracles: the fork-vs-`dicom-parser@1.8.21`
-  differential over the in-repo corpus, and a DCMTK `dcmdump` writer-acceptance
-  job (review B1). Deepened differential comparator; from-model numeric-writer
-  round-trip coverage (review B2/B3/B4).
 
 ## [2.0.0-rc.1] — unreleased
 

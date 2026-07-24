@@ -74,7 +74,7 @@ const result = parse(bytes, { stopAt: { tag: 'x7fe00010', inclusive: false } });
 | `transferSyntax`                | parse raw/headerless datasets (no `DICM` prefix)                                                 |
 | `vrLookup`                      | supply VRs for implicit files; returning `'SQ'` enables CP-246 `UN` and private sequence parsing |
 | `charset: { assume, fallback }` | charset for files without/with-broken (0008,0005)                                                |
-| `maxInflatedBytes`              | deflate-bomb cap (default 1 GiB)                                                                 |
+| `maxInflatedBytes`              | deflate-bomb cap (default 256 MiB)                                                               |
 | `maxDepth`                      | sequence nesting bound (default 128)                                                             |
 | `inflate`                       | injected inflater (replaces the old global-pako sniffing)                                        |
 

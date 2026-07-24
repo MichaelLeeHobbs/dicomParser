@@ -23,13 +23,13 @@ export interface InflateOptions {
     /** Caller-supplied inflater (takes precedence over built-in paths). */
     readonly inflate?: InflateFn;
     /**
-     * Maximum inflated size in bytes (deflate-bomb guard, default 1 GiB).
+     * Maximum inflated size in bytes (deflate-bomb guard, default 256 MiB).
      * Exceeding it is a `malformed` error.
      */
     readonly maxInflatedBytes?: number;
 }
 
-/** Default inflated-size cap: 1 GiB. */
+/** Default inflated-size cap: 256 MiB (deflate-bomb guard, adversarial review S2). */
 export const DEFAULT_MAX_INFLATED_BYTES = 256 * 1024 * 1024;
 
 interface ZlibLike {
