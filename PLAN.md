@@ -295,3 +295,28 @@ remaining: diversify the differential corpus beyond the brain-MR monoculture (US
 SR, BE, private-heavy vendor files, and the `bad/` malformed set with expected-divergence
 annotations) — needs real vendor fixtures, so it is a data-sourcing task; and a nightly
 high-`numRuns` fuzz job seeded with the full corpus + a persisted crash-regression corpus.
+
+## 11. DCMTK comparison (2026-07-24)
+
+A source-level comparison against DCMTK's `dcmdata` C++ library (the spec-authoritative
+reference; its CLI tools are not — `dcm2json` transcodes charsets and hangs on compressed pixel
+data, which is why dcmtk.js moved its data layer to this parser). Started with one subsystem
+deep: **sequence / item / delimiter semantics** (`dcitem.cc`, `dcsequen.cc`).
+
+- **Validated against DCMTK:** a defined-length item stops at `transferredBytes >= lengthField`
+  without peeking (the fork's **D1** fix); `stopParsingAtElement` uses `>=` and excludes the
+  triggering element (the fork's flipped **stopAt** default); odd-length warnings;
+  element-larger-than-item bounding; nesting-depth cap. All aligned.
+- **One real gap fixed (PR #47):** an undefined-length sequence closed by an item delimiter
+  (`FFFE,E00D`) instead of a sequence delimiter derailed the fork (dropped the file tail); DCMTK
+  recovers via `dcmReplaceWrongDelimitationItem`. The fork now recovers likewise.
+- **Design differences (by design, not bugs):** the fork is lenient-by-default on malformed
+  delimiters (DCMTK is strict unless `dcmIgnoreParsingErrors`/`dcmReplaceWrongDelimitationItem`);
+  the fork clamps an over-long element to the item bound where DCMTK errors/skips.
+
+Also added a **`dcm2xml` read differential** as an independent CI oracle (PR pending): fork vs
+DCMTK XML over the corpus, element-for-element on tag set, byte `len`, VR, and string/integer
+values — **zero divergences**. `dcm2xml` (not `dcm2json`) is the trusted tool.
+
+Breadth beyond this subsystem (VR table, length/overflow, encapsulated pixel data, ISO 2022
+charset) is open — decide whether to continue per the value found here.
