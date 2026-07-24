@@ -224,6 +224,22 @@ describe('decodeDicomText — ISO 2022 code extensions', () => {
         expect(decode('ISO 2022 IR 6\\ISO 2022 IR 144', 'abc\x1b-L\xbb\xee\xda')).toBe('abcЛюк');
     });
 
+    it('resets a leaked single-byte G1 designation at a value delimiter (DCMTK checkDelimiters parity)', () => {
+        // ESC -L designates Cyrillic (ISO-8859-5) to G1. Without a reset escape
+        // before the backslash the designation would leak into the next value;
+        // DCMTK resets at the delimiter for single-byte charsets, so the same GR
+        // bytes in value 2 decode as the default (Latin-1), not Cyrillic.
+        expect(decode('ISO 2022 IR 6\\ISO 2022 IR 144', '\x1b-L\xbb\xee\xda\\\xbb\xee\xda')).toBe('Люк\\»îÚ');
+    });
+
+    it('does not reset at a delimiter while a multi-byte G0 set is active (matches DCMTK)', () => {
+        // Under JIS X 0208 (ISO 2022 IR 87), a 0x5C is a kanji byte, not a
+        // delimiter — DCMTK suppresses delimiter checking here too, so a
+        // non-conformant value missing its reset escape stays a single run.
+        const decoded = decode('ISO 2022 IR 6\\ISO 2022 IR 87', '\x1b$B;3ED\\ABC');
+        expect(decoded).not.toContain('\\'); // the 0x5C was consumed as part of the kanji stream
+    });
+
     it('keeps the current decoder on unrecognized escape sequences', () => {
         expect(decode('ISO 2022 IR 6\\ISO 2022 IR 87', 'abc\x1b%Gdef')).toBe('abcdef');
     });

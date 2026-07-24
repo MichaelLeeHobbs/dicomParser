@@ -54,6 +54,12 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ### Fixed
 
+- ISO 2022 code extensions now reset the G0/G1 designations to the initial state at
+  a value/line delimiter (`\`, `HT`, `LF`, `FF`, `CR`) when a single-byte charset is
+  active, so a non-conformant value that omits its reset escape no longer leaks a
+  designated single-byte set (e.g. Cyrillic) into the next value. Suppressed while a
+  multi-byte G0 set (JIS X 0208/0212) is active, where a `0x5C` is a character byte —
+  matching DCMTK's `checkDelimiters` (`dcspchrs.cc`; PS3.5 C.12.1.1.2).
 - Encapsulated pixel data wrongly closed by an item delimiter (`FFFE,E00D`) instead
   of a sequence delimiter (`FFFE,E0DD`) no longer surfaces the stray delimiter as a
   phantom zero-length fragment; it terminates the pixel sequence cleanly with a
