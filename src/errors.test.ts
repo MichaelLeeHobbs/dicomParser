@@ -9,12 +9,16 @@ describe('isDicomError', () => {
         expect(isDicomError(undefined)).toBe(false);
         expect(isDicomError('malformed')).toBe(false);
         expect(isDicomError({ code: 'malformed', name: 'DicomError' })).toBe(false);
+        // a bare branded plain object is not Error-like, so it is rejected
+        expect(isDicomError({ [Symbol.for('@ubercode/dicom-parser/DicomError')]: true })).toBe(false);
     });
 
-    it('recognizes a cross-realm DicomError via the shared Symbol.for brand', () => {
-        // A DicomError constructed in the other (ESM/CJS) build would fail
-        // `instanceof`, but carries the same registry-shared brand symbol.
-        const fromOtherBuild = { [Symbol.for('@ubercode/dicom-parser/DicomError')]: true };
+    it('recognizes a cross-build DicomError (Error-like + shared brand)', () => {
+        // A DicomError from the other (ESM/CJS) build fails `instanceof DicomError`
+        // but is a real Error carrying the registry-shared brand symbol.
+        const brand = Symbol.for('@ubercode/dicom-parser/DicomError');
+        const fromOtherBuild = new Error('boom');
+        (fromOtherBuild as unknown as Record<symbol, unknown>)[brand] = true;
         expect(isDicomError(fromOtherBuild)).toBe(true);
     });
 });

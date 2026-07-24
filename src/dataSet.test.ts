@@ -195,6 +195,16 @@ describe('DicomDataSet string accessors', () => {
         expect(le().floatStrings('x12345678')).toBeUndefined();
         expect(le().intStrings('x12345678')).toBeUndefined();
     });
+
+    it('bulk numeric accessors yield NaN for empty/non-numeric components, positionally (W13)', () => {
+        // (0011,0011) DS, value "12\\ab" → components ['12', '', 'ab']
+        const bytes = Uint8Array.from([0x11, 0x00, 0x11, 0x00, 0x44, 0x53, 0x06, 0x00, 0x31, 0x32, 0x5c, 0x5c, 0x61, 0x62]);
+        const result = readElements(new ByteStream(bytes, { littleEndian: true }), { explicitVr: true });
+        const dataSet = new DicomDataSet(bytes, true, result.elements);
+        expect(dataSet.strings('x00110011')).toEqual(['12', '', 'ab']);
+        expect(dataSet.floatStrings('x00110011')).toEqual([12, Number.NaN, Number.NaN]);
+        expect(dataSet.intStrings('x00110011')).toEqual([12, Number.NaN, Number.NaN]);
+    });
 });
 
 describe('DicomDataSet rawBytes', () => {

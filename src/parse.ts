@@ -106,7 +106,6 @@ interface Plan {
     readonly error: DicomError | undefined;
 }
 
-/** Uncompressed (native pixel data) transfer syntaxes. */
 /**
  * Transfer syntaxes whose pixel data is native (non-encapsulated). Everything
  * else is a compressed/encapsulated syntax whose (7FE0,0010) is fragmented.

@@ -163,23 +163,26 @@ export function createJpegBasicOffsetTable(bytes: Uint8Array, element: DicomElem
 /** A typed view over native (uncompressed) pixel data. */
 export type PixelDataView = Uint8Array | Int8Array | Uint16Array | Int16Array | Float32Array | Float64Array;
 
+/** Whether the JS host is little-endian (true on all mainstream platforms). */
+const HOST_LITTLE_ENDIAN = new Uint8Array(Uint16Array.of(1).buffer)[0] === 1;
+
 interface ViewSpec {
     readonly offset: number;
     readonly length: number;
     readonly bitsAllocated: number;
     readonly signed: boolean;
-    /** Dataset byte order; big-endian 16-bit pixels are byte-swapped to host order. */
+    /** Dataset byte order; 16-bit pixels are byte-swapped when it differs from the host. */
     readonly littleEndian: boolean;
 }
 
-/** Builds a 16-bit view, byte-swapping when the source is big-endian. */
+/** Builds a 16-bit view, byte-swapping when dataset order differs from the host. */
 function view16(bytes: Uint8Array, spec: ViewSpec, count: number): PixelDataView {
     const { offset, signed, littleEndian } = spec;
     const absolute = bytes.byteOffset + offset;
-    // Typed arrays use host (little) endianness. Big-endian pixel data must be
-    // byte-swapped into a fresh buffer first, or the samples come out swapped
-    // (review §3). Aligned little-endian data views in place; otherwise copy.
-    if (!littleEndian) {
+    // Typed arrays use host byte order. Pixel data whose order differs from the
+    // host must be byte-swapped into a fresh buffer first, or the samples come out
+    // swapped (review §3). Matching-order data views in place when aligned.
+    if (littleEndian !== HOST_LITTLE_ENDIAN) {
         const swapped = new Uint8Array(count * 2);
         for (let i = 0; i < count; i++) {
             swapped[i * 2] = bytes[offset + i * 2 + 1] as number;

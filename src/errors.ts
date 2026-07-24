@@ -66,7 +66,10 @@ export class DicomError extends Error {
  * @returns `true` when `value` is a `DicomError` (from any build)
  */
 export function isDicomError(value: unknown): value is DicomError {
-    return typeof value === 'object' && value !== null && (value as Record<symbol, unknown>)[DICOM_ERROR_BRAND] === true;
+    // `instanceof Error` is reliable across the dual ESM/CJS build (both extend
+    // the one shared global Error); the brand then distinguishes a DicomError from
+    // any other build. Requiring both rejects a bare branded plain object.
+    return value instanceof Error && (value as unknown as Record<symbol, unknown>)[DICOM_ERROR_BRAND] === true;
 }
 
 /** Machine-readable warning categories. */
