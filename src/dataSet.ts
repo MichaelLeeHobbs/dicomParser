@@ -262,8 +262,8 @@ export class DicomDataSet {
 
     /**
      * Returns every DS value parsed as a float, or `undefined` when the element
-     * is absent. Positionally aligned with {@link strings}; a component that is
-     * empty or not numeric is `NaN`.
+     * is absent or empty. Positionally aligned with {@link strings}; a component
+     * that is empty or not numeric is `NaN`.
      */
     floatStrings(tag: TagLike): number[] | undefined {
         return this.strings(tag)?.map(value => (value === '' ? Number.NaN : Number.parseFloat(value)));
@@ -271,8 +271,8 @@ export class DicomDataSet {
 
     /**
      * Returns every IS value parsed as an integer, or `undefined` when the
-     * element is absent. Positionally aligned with {@link strings}; a component
-     * that is empty or not numeric is `NaN`.
+     * element is absent or empty. Positionally aligned with {@link strings}; a
+     * component that is empty or not numeric is `NaN`.
      */
     intStrings(tag: TagLike): number[] | undefined {
         return this.strings(tag)?.map(value => (value === '' ? Number.NaN : Number.parseInt(value, 10)));

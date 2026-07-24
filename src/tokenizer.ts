@@ -170,8 +170,22 @@ class Tokenizer {
                 if (!(thrown instanceof DicomError)) {
                     throw thrown;
                 }
-                if (this.recoverToFallback(thrown)) {
-                    continue;
+                // recoverToFallback runs here (inside the catch); a limit-exceeded
+                // its addElement raises would otherwise escape uncaught. Catching
+                // it at the call site keeps the never-throws contract AND surfaces
+                // the cap as a partial-result error — even when the fallback is the
+                // last element read, where a suppressing guard would hide it.
+                try {
+                    if (this.recoverToFallback(thrown)) {
+                        continue;
+                    }
+                } catch (fallbackThrown) {
+                    if (!(fallbackThrown instanceof DicomError)) {
+                        throw fallbackThrown;
+                    }
+                    error = fallbackThrown;
+                    this.salvage();
+                    break;
                 }
                 error = thrown;
                 this.salvage();
@@ -211,13 +225,8 @@ class Tokenizer {
         this.stack.length = fallbackIndex;
         this.stream.position = frame.fallbackPosition as number;
         this.warn('sequence-fallback', `element ${tagToString(frame.header.tag)} could not be parsed as a sequence (${cause.message}); kept as opaque value`);
-        // recoverToFallback runs inside run()'s catch; a limit-exceeded thrown by
-        // this addElement would escape the catch and break the never-throws
-        // contract. Guard it like the salvage path — the one fallback element is
-        // allowed through, and the next real read re-trips the cap normally,
-        // yielding a partial result with a limit-exceeded error instead (review §3).
-        const prevSalvaging = this.salvaging;
-        this.salvaging = true;
+        // A limit-exceeded raised here propagates to run()'s guarded call site,
+        // which surfaces it as a partial-result error (review §3 / follow-up).
         this.addElement(parent, {
             kind: 'value',
             tag: frame.header.tag,
@@ -229,7 +238,6 @@ class Tokenizer {
             endOffset: frame.header.dataOffset + frame.header.lengthField,
             hadUndefinedLength: false,
         });
-        this.salvaging = prevSalvaging;
         return true;
     }
 

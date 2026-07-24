@@ -672,7 +672,9 @@ describe('readElements — malformed-input containment (adversarial review #1-#7
         expect(element.items[0]?.dataSet.element('xfffee00d')).toBeUndefined();
     });
 
-    it('D1: a defined-length item ending at its exact bound does not consume an ancestor item delimiter', () => {
+    it('D1: a defined-length item ending at its exact bound does not consume an ancestor item delimiter (conformant input)', () => {
+        // NB: unlike its siblings in this block, this input is fully conformant —
+        // it is the containment of a mis-termination, not of malformed bytes.
         // Conformant, mixed length encodings (explicit LE, so SQ is self-describing).
         // Nesting: outer SQ (undefined) → item A (undefined) whose last element is
         // a defined-length SQ B → defined-length item C ending exactly at B's bound
@@ -743,15 +745,21 @@ describe('readElements — malformed-input containment (adversarial review #1-#7
         expect(result.elements.has(tagFromString('x00100010'))).toBe(true);
     });
 
-    it('§3: a fallback opaque value that trips maxElements yields a partial result, not a thrown parse', () => {
-        // (0009,0010) implicit, vrLookup→SQ, defined length 8, content not an item
-        // tag → pushItem throws malformed → recoverToFallback adds the opaque value,
-        // which crosses maxElements. That add must not throw out of run()'s catch.
-        const el = [0x09, 0x00, 0x10, 0x00, ...u32(8), 0x08, 0x00, 0x18, 0x00, ...u32(2)];
+    it('§3: a fallback opaque value that trips maxElements surfaces limit-exceeded with partial results, not a throw', () => {
+        // Element A is a normal value; element B is (0009,0010) implicit vrLookup→SQ,
+        // defined length 8, content not an item tag → pushItem throws malformed →
+        // recoverToFallback adds the opaque value, which crosses maxElements. That
+        // add must not throw out of run()'s catch, and — even though it is the last
+        // element read — the cap must still surface as a limit-exceeded error.
+        const a = [0x08, 0x00, 0x18, 0x00, ...u32(2), 0x31, 0x20];
+        const b = [0x09, 0x00, 0x10, 0x00, ...u32(8), 0x08, 0x00, 0x18, 0x00, ...u32(2)];
+        const bytes = [...a, ...b];
         const vrLookup = (t: number): string | undefined => (t === 0x00090010 ? 'SQ' : undefined);
-        expect(() => readElements(streamOf(el), { explicitVr: false, vrLookup, maxElements: 1 })).not.toThrow();
-        const result = readElements(streamOf(el), { explicitVr: false, vrLookup, maxElements: 1 });
-        expect(result.elements.get(tagFromString('x00090010'))?.kind).toBe('value'); // kept as opaque value
+        expect(() => readElements(streamOf(bytes), { explicitVr: false, vrLookup, maxElements: 2 })).not.toThrow();
+        const result = readElements(streamOf(bytes), { explicitVr: false, vrLookup, maxElements: 2 });
+        expect(result.error?.code).toBe('limit-exceeded');
+        expect(result.elements.has(tagFromString('x00080018'))).toBe(true); // partial result kept
+        expect(result.elements.has(tagFromString('x00090010'))).toBe(false); // the element that tripped the cap is dropped
     });
 
     it('§3: undefined-length encapsulated pixel data nested in an item does not swallow a following root sibling', () => {

@@ -283,8 +283,11 @@ workarounds; ordered by their stated priority. None are 2.0 blockers.
   predicate edits in `modifyDataSet` (anonymization shapes). W12 deliberate-malformation
   fixture knobs. W14 transcode substrate — already satisfied; keep codecs out of the core.
 
-**Pulled into 2.0** (small, high-leverage, done): **W7** `isValidUid()` (PS3.5 §9.1 grammar,
-exported) and **W13** bulk accessors `DicomDataSet.strings`/`floatStrings`/`intStrings`.
+**Pulled into 2.0** (small, high-leverage, done): field-review **W7** `isValidUid()` (PS3.5
+§9.1 grammar, exported) and field-review **W13** bulk accessors
+`DicomDataSet.strings`/`floatStrings`/`intStrings`. (These are the MedFusion wish-list W7/W13,
+distinct from the adversarial-review W-series in §10's fix list above — e.g. that review's W7
+was the `serializeParsed` partial-parse guard.)
 
 **Deferred to 2.1 — test/release engineering (§5 of the review).** The acceptance oracles
 already run in CI (B1, PR #22) and the differential recurses into sequence items (B2/B3);

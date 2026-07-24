@@ -155,7 +155,7 @@ const UID_COMPONENT = /^(0|[1-9]\d*)$/;
  * Validates a DICOM UID (VR UI) against the PS3.5 §9.1 grammar: dot-separated
  * numeric components, each either `0` or a leading-zero-free run of digits, with
  * a total length of 1–64 characters. Any trailing NUL/space padding must already
- * be stripped (as `string('…')` / `readUiString` do).
+ * be stripped (as `DicomDataSet.string()` / `readUiString` do).
  *
  * This is stricter than a `[0-9.]` character-class check: it rejects empty
  * components (`1..2`), leading/trailing dots, and leading zeros. That strictness

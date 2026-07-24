@@ -81,9 +81,10 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
   group-2 amplification payload is bounded by a memory-constrained caller's limit
   rather than only the built-in default (review §3).
 - `parse()` no longer throws when a speculative sequence fallback crosses
-  `maxElements`: adding the single opaque fallback value is guarded like the
-  salvage path, so the limit surfaces as a partial result with a `limit-exceeded`
-  error on the next read instead of escaping the never-throws contract (review §3).
+  `maxElements`: the `limit-exceeded` raised while adding the opaque fallback value
+  is caught at `run()`'s recovery call site and surfaced as a partial-result error
+  — even when the fallback is the last element read — instead of escaping the
+  never-throws contract or being silently suppressed (review §3 + Copilot review).
 - Undefined-length encapsulated pixel data nested in a sequence item is now
   bounded by its enclosing item, not the whole stream — a missing `FFFE,E0DD` can
   no longer make the fragment scan swallow a following sibling's bytes (review §3).
