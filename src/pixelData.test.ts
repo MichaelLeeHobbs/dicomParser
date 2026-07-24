@@ -148,6 +148,15 @@ describe('createJpegBasicOffsetTable', () => {
         expect(createJpegBasicOffsetTable(result.bytes, element)).toEqual([0]);
     });
 
+    it('handles a fragment shorter than 2 bytes without probing before its start (review §3)', () => {
+        // A <2-byte trailing fragment must not read behind its own start when the
+        // EOI probe runs; frag1 ends frame 0, the 1-byte frag2 is not an EOI.
+        const fragments = [Uint8Array.from([1, 2, 0xff, 0xd9]), Uint8Array.from([0x00])];
+        const result = parseFile([encapsulatedWithBot(fragments, [])]);
+        const element = result.dataSet.element('x7fe00010') as NonNullable<ReturnType<typeof result.dataSet.element>>;
+        expect(createJpegBasicOffsetTable(result.bytes, element)).toEqual([0, 12]);
+    });
+
     it('matches NumberOfFrames on the real multi-frame JPEG-baseline fixture', async () => {
         const { readFileSync } = await import('node:fs');
         const { join } = await import('node:path');
@@ -232,6 +241,22 @@ describe('nativePixelDataView (#73)', () => {
     it('rejects unsupported BitsAllocated', () => {
         const dataSet = dataSetWith([explicitEl('00280100', 'US', Uint8Array.from([32, 0])), explicitEl('7FE00010', 'OW', Uint8Array.from([1, 2, 3, 4]))]);
         expect(() => nativePixelDataView(dataSet)).toThrow(DicomError);
+    });
+
+    it('decodes 16-bit big-endian pixel data identically to its little-endian twin (review §3)', async () => {
+        // Explicit BE 16-bit pixels must be byte-swapped to host order; without
+        // that the samples come out swapped. The BE/LE fixture pair is the same
+        // image, so their views must be element-for-element equal.
+        const { readFileSync } = await import('node:fs');
+        const { join } = await import('node:path');
+        const dir = join(__dirname, '..', 'testImages');
+        const be = parse(new Uint8Array(readFileSync(join(dir, 'CT1_UNC.explicit_big_endian.dcm'))));
+        const le = parse(new Uint8Array(readFileSync(join(dir, 'CT1_UNC.explicit_little_endian.dcm'))));
+        expect(be.dataSet.littleEndian).toBe(false);
+        const beView = nativePixelDataView(be.dataSet) as Int16Array;
+        const leView = nativePixelDataView(le.dataSet) as Int16Array;
+        expect(beView.length).toBe(leView.length);
+        expect(Array.from(beView.subarray(0, 64))).toEqual(Array.from(leView.subarray(0, 64)));
     });
 });
 

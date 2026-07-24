@@ -107,7 +107,11 @@ interface Plan {
 }
 
 /** Uncompressed (native pixel data) transfer syntaxes. */
-const NATIVE_TRANSFER_SYNTAXES: ReadonlySet<string> = new Set([TS_IMPLICIT_LE, TS_EXPLICIT_LE, TS_DEFLATED_LE, TS_EXPLICIT_BE]);
+/**
+ * Transfer syntaxes whose pixel data is native (non-encapsulated). Everything
+ * else is a compressed/encapsulated syntax whose (7FE0,0010) is fragmented.
+ */
+export const NATIVE_TRANSFER_SYNTAXES: ReadonlySet<string> = new Set([TS_IMPLICIT_LE, TS_EXPLICIT_LE, TS_DEFLATED_LE, TS_EXPLICIT_BE]);
 
 function failed(header: Part10Header, bytes: Uint8Array, transferSyntax: string, error: DicomError): ParseResult {
     return {

@@ -8,6 +8,16 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ### Fixed
 
+- `writeFile` now rejects a transfer-syntax / pixel-data mismatch: encapsulated
+  (fragmented) pixel data requires a compressed transfer syntax, and native pixel
+  data requires a native one. A tag-morph flow (parse a JPEG, `modifyDataSet`,
+  `writeFile` defaulting to Explicit LE) can no longer silently emit a
+  non-conformant file with fragments under a native syntax (review D2).
+- `nativePixelDataView` now byte-swaps 16-bit big-endian pixel data to host order
+  instead of returning byte-swapped samples for Explicit VR Big Endian files
+  (review §3).
+- `createJpegBasicOffsetTable`'s end-of-image probe no longer reads before a
+  fragment's start for fragments shorter than 2 bytes (review §3).
 - A present-but-empty `(0008,0005)` now declares the default repertoire (PS3.5),
   distinct from an absent element: a nested item with an empty SpecificCharacterSet
   resets to the default instead of inheriting the parent charset, and an empty

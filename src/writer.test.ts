@@ -201,6 +201,23 @@ describe('writeFile', () => {
         expect(() => writeFile({ dataSet: dataSet(spec), preamble: new Uint8Array(4) })).toThrow(/128 bytes/);
     });
 
+    it('rejects a transfer-syntax / pixel-data payload mismatch (review D2)', () => {
+        const jpeg = '1.2.840.10008.1.2.4.50';
+        const encapsulated = dataSet([
+            ...spec,
+            { ...element('7FE00010', 'OB', { kind: 'fragments', basicOffsetTable: [0], fragments: [Uint8Array.from([1, 2, 3, 4])] }), undefinedLength: true },
+        ]);
+        const native = dataSet([...spec, element('7FE00010', 'OW', { kind: 'bytes', bytes: Uint8Array.from([1, 2, 3, 4]) })]);
+        // encapsulated payload defaulting to native Explicit LE is refused...
+        expect(() => writeFile({ dataSet: encapsulated })).toThrow(/encapsulated .*native/);
+        // ...but the matching compressed transfer syntax is accepted
+        expect(() => writeFile({ dataSet: encapsulated, transferSyntax: jpeg })).not.toThrow();
+        // native pixel data under a compressed transfer syntax is refused...
+        expect(() => writeFile({ dataSet: native, transferSyntax: jpeg })).toThrow(/native pixel data .*compressed/);
+        // ...and is fine under a native transfer syntax
+        expect(() => writeFile({ dataSet: native })).not.toThrow();
+    });
+
     it('buildMetaGroup produces the documented identifiers', () => {
         const meta = buildMetaGroup(TS_EXPLICIT_LE, '1.2', '3.4');
         const result = parse(meta, { transferSyntax: TS_EXPLICIT_LE });
