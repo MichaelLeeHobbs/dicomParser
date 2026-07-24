@@ -8,6 +8,13 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ### Fixed
 
+- A present-but-empty `(0008,0005)` now declares the default repertoire (PS3.5),
+  distinct from an absent element: a nested item with an empty SpecificCharacterSet
+  resets to the default instead of inheriting the parent charset, and an empty
+  root declaration wins over the `charset.assume` option (review §3).
+- The file meta group now honors a caller's `maxElements`/`maxDepth`, so a hostile
+  group-2 amplification payload is bounded by a memory-constrained caller's limit
+  rather than only the built-in default (review §3).
 - `parse()` no longer throws when a speculative sequence fallback crosses
   `maxElements`: adding the single opaque fallback value is guarded like the
   salvage path, so the limit surfaces as a partial result with a `limit-exceeded`

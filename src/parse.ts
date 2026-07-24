@@ -10,7 +10,14 @@
  */
 
 import { ByteStream } from './byteStream';
-import { isProbableUtf8Mislabel, LATIN1_CHARSET_CONTEXT, resolveCharsetContext, type CharsetContext, type CharsetOptions } from './charset';
+import {
+    DEFAULT_CHARSET_CONTEXT,
+    isProbableUtf8Mislabel,
+    LATIN1_CHARSET_CONTEXT,
+    resolveCharsetContext,
+    type CharsetContext,
+    type CharsetOptions,
+} from './charset';
 import { DicomDataSet } from './dataSet';
 import { DicomError, type ParseWarning } from './errors';
 import { inflateRaw, inflateRawAsync, type InflateFn } from './inflate';
@@ -150,13 +157,35 @@ function spliceInflated(bytes: Uint8Array, dataSetPosition: number, inflated: Ui
     return full;
 }
 
-/** Raw latin-1 (0008,0005) value of a dataset, or undefined. */
-function rawSpecificCharacterSet(dataSet: DicomDataSet): string | undefined {
+/**
+ * The (0008,0005) declaration state of a dataset. Per PS3.5 a present-but-empty
+ * SpecificCharacterSet explicitly declares the default repertoire (ISO IR 6) —
+ * distinct from an absent element, which inherits the parent (nested) or the
+ * `assume` option (root).
+ */
+type CharsetDecl = 'absent' | 'default' | { readonly raw: string };
+
+function specificCharacterSetDecl(dataSet: DicomDataSet): CharsetDecl {
     const element = dataSet.elements.get(TAG_SPECIFIC_CHARACTER_SET);
-    if (element === undefined || element.kind !== 'value' || element.length === 0) {
-        return undefined;
+    if (element === undefined || element.kind !== 'value') {
+        return 'absent';
     }
-    return readUiString(dataSet.bytes, element.dataOffset, element.length);
+    if (element.length === 0) {
+        return 'default';
+    }
+    const raw = readUiString(dataSet.bytes, element.dataOffset, element.length);
+    return raw.trim() === '' ? 'default' : { raw };
+}
+
+/** Resolves the context declared by a dataset, given the context to inherit when absent. */
+function contextForDecl(decl: CharsetDecl, inherited: CharsetContext, options: ParseOptions, warnings: ParseWarning[]): CharsetContext {
+    if (decl === 'absent') {
+        return inherited;
+    }
+    if (decl === 'default') {
+        return DEFAULT_CHARSET_CONTEXT;
+    }
+    return resolveLenient(decl.raw, options, warnings);
 }
 
 /** Resolves a context leniently: unsupported charsets warn and decode as Latin-1. */
@@ -228,9 +257,12 @@ function detectUtf8Mislabels(dataSet: DicomDataSet, context: CharsetContext, sta
  */
 function assignCharsets(root: DicomDataSet, options: ParseOptions, warnings: ParseWarning[]): void {
     const state: MislabelState = { promote: options.utf8MislabelPromote === true, seen: new Set<Tag>(), warnings };
-    const queue: { dataSet: DicomDataSet; context: CharsetContext }[] = [
-        { dataSet: root, context: resolveLenient(rawSpecificCharacterSet(root), options, warnings) },
-    ];
+    // Root: an absent (0008,0005) resolves via the `assume` option (or default);
+    // a present declaration wins over `assume`, so it is resolved directly.
+    const rootDecl = specificCharacterSetDecl(root);
+    const rootContext =
+        rootDecl === 'absent' ? resolveLenient(undefined, options, warnings) : contextForDecl(rootDecl, DEFAULT_CHARSET_CONTEXT, options, warnings);
+    const queue: { dataSet: DicomDataSet; context: CharsetContext }[] = [{ dataSet: root, context: rootContext }];
     while (queue.length > 0) {
         const { dataSet, context } = queue.pop() as { dataSet: DicomDataSet; context: CharsetContext };
         dataSet.applyCharset(context);
@@ -240,8 +272,9 @@ function assignCharsets(root: DicomDataSet, options: ParseOptions, warnings: Par
                 continue;
             }
             for (const item of element.items) {
-                const own = rawSpecificCharacterSet(item.dataSet);
-                queue.push({ dataSet: item.dataSet, context: own === undefined ? context : resolveLenient(own, options, warnings) });
+                // Nested: an absent (0008,0005) inherits the parent context; a
+                // present-but-empty one resets to the default repertoire (PS3.5).
+                queue.push({ dataSet: item.dataSet, context: contextForDecl(specificCharacterSetDecl(item.dataSet), context, options, warnings) });
             }
         }
     }
