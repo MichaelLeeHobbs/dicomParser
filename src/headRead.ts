@@ -21,13 +21,12 @@
 import { ByteStream } from './byteStream';
 import type { CharsetOptions } from './charset';
 import { DicomDataSet } from './dataSet';
-import type { DicomElement } from './element';
 import { DicomError, type ParseWarning } from './errors';
 import { readExplicitElementHeader, readImplicitElementHeader, type ElementHeader, type VrLookup } from './elementHeader';
 import { NATIVE_TRANSFER_SYNTAXES, parse, TS_DEFLATED_LE, TS_EXPLICIT_BE, TS_GE_PRIVATE_DLX, TS_IMPLICIT_LE } from './parse';
 import { readPart10Header } from './part10';
-import { TAG_PIXEL_DATA, TAG_SEQUENCE_DELIMITATION, toTag, UNDEFINED_LENGTH, type Tag } from './tag';
-import { readElements, type StopAtOption } from './tokenizer';
+import { TAG_PIXEL_DATA, TAG_SEQUENCE_DELIMITATION, tagToString, toTag, UNDEFINED_LENGTH, type Tag } from './tag';
+import { readElements, type ReadElementsResult, type StopAtOption } from './tokenizer';
 
 /** Value representations whose defined-length value bytes are skippable bulk. */
 const BULK_VRS: ReadonlySet<string> = new Set(['OB', 'OW', 'OD', 'OF', 'OL', 'OV']);
@@ -242,7 +241,7 @@ function skipBulk(walk: Walk, header: ElementHeader): void {
     const dataOffset = walk.offset + header.dataOffset;
     let length = header.lengthField;
     if (dataOffset + length > walk.source.size) {
-        walk.warnings.push({ code: 'unexpected-eof', message: `value of ${header.tag} truncated`, offset: dataOffset });
+        walk.warnings.push({ code: 'unexpected-eof', message: `value of ${tagToString(header.tag)} truncated`, offset: dataOffset });
         length = walk.source.size - dataOffset;
     }
     walk.bulk.set(header.tag, { offset: dataOffset, length });
@@ -281,6 +280,24 @@ async function copyUndefined(walk: Walk): Promise<void> {
     }
 }
 
+/**
+ * Extent of the first root construct in a parsed window. Root elements are
+ * contiguous, so the construct ends where the next one begins — prefer that
+ * `nextStart`: a malformed duplicate root tag can overwrite the offset-0 element
+ * in the tag-keyed map, but the following element's start still pins the extent
+ * (and equals the construct's endOffset). Falls back to the offset-0 element's
+ * own endOffset when it is the only root element in the window.
+ */
+function firstExtent(result: ReadElementsResult): number | undefined {
+    let firstEnd: number | undefined; // endOffset of the construct starting at 0
+    let nextStart: number | undefined; // startOffset of the following root element
+    for (const el of result.elements.values()) {
+        if (el.startOffset === 0) firstEnd = el.endOffset;
+        else if (nextStart === undefined || el.startOffset < nextStart) nextStart = el.startOffset;
+    }
+    return nextStart ?? firstEnd;
+}
+
 /** Runs the tokenizer over `buf` and returns the endOffset of the element at 0. */
 function measureFirst(buf: Uint8Array, walk: Walk): number | undefined {
     const stream = new ByteStream(buf, { littleEndian: walk.plan.littleEndian, position: 0 });
@@ -291,13 +308,10 @@ function measureFirst(buf: Uint8Array, walk: Walk): number | undefined {
         ...(walk.options.maxDepth === undefined ? {} : { maxDepth: walk.options.maxDepth }),
         ...(walk.options.maxElements === undefined ? {} : { maxElements: walk.options.maxElements }),
     });
-    let first: DicomElement | undefined;
-    for (const el of result.elements.values()) {
-        if (el.startOffset === 0) first = el;
-    }
-    if (first === undefined) return undefined;
-    const errBefore = result.error !== undefined && (result.error.offset ?? Number.MAX_SAFE_INTEGER) < first.endOffset;
-    return errBefore ? undefined : first.endOffset;
+    const extent = firstExtent(result);
+    if (extent === undefined) return undefined;
+    const errBefore = result.error !== undefined && (result.error.offset ?? Number.MAX_SAFE_INTEGER) < extent;
+    return errBefore ? undefined : extent;
 }
 
 /** Skips encapsulated PixelData by hopping fragment item-headers (8 bytes each). */

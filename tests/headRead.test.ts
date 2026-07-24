@@ -36,7 +36,7 @@ function memReader(bytes: Uint8Array): RangeReader & { totalRead: number } {
         totalRead: 0,
         read(offset: number, length: number): Uint8Array {
             const end = Math.min(bytes.length, offset + length);
-            r.totalRead += end - offset;
+            r.totalRead += Math.max(0, end - offset); // never negative for a read at/after EOF
             return bytes.slice(offset, end);
         },
     };
@@ -316,6 +316,23 @@ describe('parseHeadAsync — edge cases, options, and fallbacks', () => {
         const head = await parseHeadAsync(memReader(file));
         assertMatchesFull(head, file, 'big-sq');
         expect(head.bulk.has(0x7fe00010)).toBe(true);
+    });
+
+    it('measures a construct whose root tag is later duplicated (map overwrite)', async () => {
+        // Two root-level undefined-length sequences share tag (0008,1140) — a
+        // malformed duplicate. The tag-keyed measurement map keeps only the last,
+        // so extent must be pinned by the following element's start, not by
+        // finding the offset-0 element. Otherwise the first SQ's window grows to
+        // EOF and the trailing pixel data is never skipped.
+        const dup = '00081140';
+        const file = p10(TS.explicitLE, [
+            sqExplicitUndefined(dup, [item(explicitEl('00080100', 'SH', latin1('AB')))]),
+            sqExplicitUndefined(dup, [item(explicitEl('00080100', 'SH', latin1('CD')))]),
+            explicitEl('7FE00010', 'OW', blob),
+        ]);
+        const head = await parseHeadAsync(memReader(file));
+        assertMatchesFull(head, file, 'dup-root-tag');
+        expect(head.bulk.has(0x7fe00010), 'pixel data skipped despite duplicate root tag').toBe(true);
     });
 });
 
