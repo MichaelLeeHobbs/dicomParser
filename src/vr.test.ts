@@ -17,8 +17,18 @@ describe('explicitLengthBytes', () => {
         expect(explicitLengthBytes(vr)).toBe(2);
     });
 
-    it('treats unrecognized VR codes as short form (legacy behavior)', () => {
-        expect(explicitLengthBytes('ZZ')).toBe(2);
+    it('treats an unknown two-uppercase-letter VR as a future long-form VR (DCMTK parity)', () => {
+        // The DICOM committee reserved all future VRs to the extended-length form,
+        // so an unknown [A-Z][A-Z] code reads a 4-byte length (matches DCMTK).
+        expect(explicitLengthBytes('ZZ')).toBe(4);
+        expect(explicitLengthBytes('QQ')).toBe(4);
+    });
+
+    it('treats other unrecognized VR codes as short form', () => {
+        expect(explicitLengthBytes('??')).toBe(2); // DCMTK EVR_UNKNOWN2B workaround
+        expect(explicitLengthBytes('zz')).toBe(2); // lowercase
+        expect(explicitLengthBytes('A1')).toBe(2); // mixed
+        expect(explicitLengthBytes('')).toBe(2);
     });
 });
 

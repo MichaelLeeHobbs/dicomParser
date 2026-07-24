@@ -54,6 +54,12 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ### Fixed
 
+- An unrecognized explicit VR consisting of two uppercase letters is now read with
+  the 4-byte extended-length form (a _future_ VR) instead of the 2-byte short form.
+  The DICOM committee reserved all future VRs to the extended-length form, so the
+  old short-form assumption would mis-read the length field of any future long-form
+  VR and derail the rest of the stream. Other unrecognized codes keep the 2-byte
+  form. Matches DCMTK (`DcmVR::setVR` → `EVR_UNKNOWN`/`EVR_UNKNOWN2B`).
 - An undefined-length sequence closed by an item delimiter (`FFFE,E00D`) instead
   of a sequence delimiter (`FFFE,E0DD`) — a known scanner quirk — now recovers and
   keeps reading the rest of the stream (with a `missing-sequence-delimiter`

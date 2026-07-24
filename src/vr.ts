@@ -62,14 +62,34 @@ export function isKnownVr(value: string): value is Vr {
  */
 const LONG_FORM_VRS: ReadonlySet<string> = new Set(['OB', 'OD', 'OF', 'OL', 'OV', 'OW', 'SQ', 'SV', 'UC', 'UN', 'UR', 'UT', 'UV']);
 
+/** Whether `vr` is exactly two uppercase ASCII letters (a possible future VR). */
+function isTwoUpperLetters(vr: string): boolean {
+    if (vr.length !== 2) {
+        return false;
+    }
+    const c1 = vr.charCodeAt(0);
+    const c2 = vr.charCodeAt(1);
+    return c1 >= 65 && c1 <= 90 && c2 >= 65 && c2 <= 90;
+}
+
 /**
  * Returns the size in bytes of the explicit-VR length field.
+ *
+ * An unrecognized VR that is two uppercase letters is treated as a *future* VR
+ * and read with the 4-byte extended-length form: the DICOM committee reserved all
+ * future VRs to that form, so reading such a code as short-form would mis-read the
+ * length field and derail the rest of the stream. Other unrecognized codes keep
+ * the 2-byte form. This matches DCMTK (`DcmVR::setVR` → `EVR_UNKNOWN` for
+ * `[A-Z][A-Z]`, `EVR_UNKNOWN2B` otherwise).
  *
  * @param vr - The two-character VR code
  * @returns `4` for long-form VRs (12-byte header), `2` otherwise (8-byte header)
  */
 export function explicitLengthBytes(vr: string): 2 | 4 {
-    return LONG_FORM_VRS.has(vr) ? 4 : 2;
+    if (LONG_FORM_VRS.has(vr)) {
+        return 4;
+    }
+    return !isKnownVr(vr) && isTwoUpperLetters(vr) ? 4 : 2;
 }
 
 /**

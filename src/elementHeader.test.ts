@@ -69,10 +69,19 @@ describe('readExplicitElementHeader', () => {
         expect(header.lengthField).toBe(16909060);
     });
 
-    it('treats an unknown VR as short form (legacy behavior)', () => {
-        const stream = new ByteStream(bytesOf([0x11, 0x22, 0x33, 0x44, 0x5a, 0x5a, 0x02, 0x00]));
+    it('treats an unknown two-uppercase-letter VR as a future long-form VR (DCMTK parity)', () => {
+        // ZZ → 12-byte long form: tag(4) + "ZZ" + reserved(2) + u32 length (4)
+        const stream = new ByteStream(bytesOf([0x11, 0x22, 0x33, 0x44, 0x5a, 0x5a, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00]));
         const header = readExplicitElementHeader(stream);
         expect(header.vr).toBe('ZZ');
+        expect(header.lengthField).toBe(4);
+        expect(header.dataOffset).toBe(12);
+    });
+
+    it('treats a non-uppercase unknown VR as short form', () => {
+        const stream = new ByteStream(bytesOf([0x11, 0x22, 0x33, 0x44, 0x3f, 0x3f, 0x02, 0x00])); // "??"
+        const header = readExplicitElementHeader(stream);
+        expect(header.vr).toBe('??');
         expect(header.lengthField).toBe(2);
         expect(header.dataOffset).toBe(8);
     });
