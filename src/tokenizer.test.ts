@@ -474,8 +474,15 @@ describe('readElements — stopAt (≥ semantics, #104/#268/#52)', () => {
         0x42, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x02,
     ];
 
-    it('stops inclusively at an exact match', () => {
+    it('defaults to exclusive at an exact match (core default flipped; compat pins inclusive)', () => {
         const result = readElements(streamOf(THREE_ELEMENTS), { stopAt: { tag: 'x00100010' } });
+        expect(result.stoppedAt).toBe(tagFromString('x00100010'));
+        expect(result.elements.size).toBe(1);
+        expect(result.elements.has(tagFromString('x00100010'))).toBe(false);
+    });
+
+    it('includes the triggering element when inclusive is true', () => {
+        const result = readElements(streamOf(THREE_ELEMENTS), { stopAt: { tag: 'x00100010', inclusive: true } });
         expect(result.stoppedAt).toBe(tagFromString('x00100010'));
         expect(result.elements.size).toBe(2);
         expect(result.elements.has(tagFromString('x00100010'))).toBe(true);
@@ -483,12 +490,12 @@ describe('readElements — stopAt (≥ semantics, #104/#268/#52)', () => {
     });
 
     it('stops at the first tag greater than a missing tag (the #104 fix)', () => {
-        const result = readElements(streamOf(THREE_ELEMENTS), { stopAt: { tag: 'x00100005' } });
+        const result = readElements(streamOf(THREE_ELEMENTS), { stopAt: { tag: 'x00100005', inclusive: true } });
         expect(result.stoppedAt).toBe(tagFromString('x00100010'));
         expect(result.elements.size).toBe(2);
     });
 
-    it('excludes the triggering element when inclusive is false (#52)', () => {
+    it('excludes the triggering element when inclusive is false (#52; now the default)', () => {
         const result = readElements(streamOf(THREE_ELEMENTS), { stopAt: { tag: 'x00100010', inclusive: false } });
         expect(result.stoppedAt).toBe(tagFromString('x00100010'));
         expect(result.elements.size).toBe(1);

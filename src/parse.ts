@@ -19,7 +19,7 @@ import {
     type CharsetOptions,
 } from './charset';
 import { DicomDataSet } from './dataSet';
-import { DicomError, type ParseWarning } from './errors';
+import { DicomError, isDicomError, type ParseWarning } from './errors';
 import { inflateRaw, inflateRawAsync, type InflateFn } from './inflate';
 import { readPart10Header, type Part10Header } from './part10';
 import { readElements, type StopAtOption } from './tokenizer';
@@ -205,7 +205,7 @@ function resolveLenient(raw: string | undefined, options: ParseOptions, warnings
         }
         return context;
     } catch (thrown) {
-        if (!(thrown instanceof DicomError)) {
+        if (!isDicomError(thrown)) {
             throw thrown;
         }
         warnings.push({ code: 'unsupported-charset', message: `${thrown.message}; strings decode as Latin-1`, offset: 0 });
@@ -335,7 +335,7 @@ export function parse(bytes: Uint8Array, options: ParseOptions = {}): ParseResul
             });
             dataBytes = spliceInflated(bytes, plan.header.dataSetPosition, inflated);
         } catch (thrown) {
-            if (!(thrown instanceof DicomError)) {
+            if (!isDicomError(thrown)) {
                 throw thrown;
             }
             return failed(plan.header, bytes, plan.transferSyntax, thrown);
@@ -367,7 +367,7 @@ export async function parseAsync(bytes: Uint8Array, options: ParseOptions = {}):
             });
             dataBytes = spliceInflated(bytes, plan.header.dataSetPosition, inflated);
         } catch (thrown) {
-            if (!(thrown instanceof DicomError)) {
+            if (!isDicomError(thrown)) {
                 throw thrown;
             }
             return failed(plan.header, bytes, plan.transferSyntax, thrown);

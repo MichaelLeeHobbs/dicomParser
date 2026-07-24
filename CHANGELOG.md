@@ -6,7 +6,20 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (vs alpha):** the core `stopAt.inclusive` default is now `false`
+  (exclusive). A metadata fast path (`parse(bytes, { stopAt: { tag: PixelData } })`)
+  no longer parses the triggering element when the flag is omitted; pass
+  `inclusive: true` to include it. The v1 `/compat` façade pins `true`, so v1
+  fidelity is unaffected (review §3).
+
 ### Added
+
+- `isDicomError(value)` — a duck-type guard (exported) that is robust across the
+  dual ESM/CJS build, where `instanceof DicomError` can fail. `parse`/`parseAsync`
+  use it internally for the injected-inflater return-vs-rethrow decision (review §3).
+- `TAG_SPECIFIC_CHARACTER_SET` is now re-exported from the package index (review §3).
 
 - A header-only benchmark (`stopAt` / `untilTag` over a header-dense file, fork vs
   legacy) — the production hot path the bulk parse bench did not exercise
@@ -38,6 +51,10 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
   `no-inflater` on 20.0–20.15 despite zlib existing (review §3).
 - Corrected the deflate-bomb default-cap documentation (TSDoc + README) to 256 MiB
   to match `DEFAULT_MAX_INFLATED_BYTES`; a test now pins the value (review §3).
+- The `/compat` façade's `version` now tracks the package `VERSION` instead of a
+  hardcoded `'2.0.0'` that would drift each release (review §3).
+- The file meta group now carries a default charset context, so meta string reads
+  use the fast decode path instead of the per-byte fallback (review §3).
 - `writeFile` now rejects a transfer-syntax / pixel-data mismatch: encapsulated
   (fragmented) pixel data requires a compressed transfer syntax, and native pixel
   data requires a native one. A tag-morph flow (parse a JPEG, `modifyDataSet`,

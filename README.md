@@ -34,8 +34,9 @@ pnpm add @ubercode/dicom-parser   # or npm i / yarn add
 import { parse } from '@ubercode/dicom-parser';
 import { readFileSync } from 'node:fs';
 
-const bytes = new Uint8Array(readFileSync('ct.dcm'));
-const result = parse(bytes);
+// `parse` accepts a Node Buffer directly (zero-copy, byteOffset honored) —
+// `new Uint8Array(...)` is only needed if you want to detach from the Buffer pool.
+const result = parse(readFileSync('ct.dcm'));
 
 if (!result.ok) {
     // typed error + everything parsed before the failure point
@@ -63,8 +64,10 @@ Browser with deflated files (no zlib): `await parseAsync(bytes)` uses
 ### Metadata-only fast path
 
 ```ts
-// stop before pixel data — >= comparison, works even if the tag is absent
-const result = parse(bytes, { stopAt: { tag: 'x7fe00010', inclusive: false } });
+// stop before pixel data — >= comparison, works even if the tag is absent.
+// The core default is exclusive, so the triggering element is not parsed;
+// pass `inclusive: true` to include it. (The /compat façade pins `true`.)
+const result = parse(bytes, { stopAt: { tag: 'x7fe00010' } });
 ```
 
 ### Lenient-mode options

@@ -29,6 +29,13 @@ export type DicomErrorCode =
     | 'limit-exceeded';
 
 /**
+ * Cross-realm brand for {@link isDicomError}. A `Symbol.for` key is shared across
+ * every module instance, so the guard works even when the ESM and CJS builds each
+ * carry their own `DicomError` class (where `instanceof` would fail).
+ */
+const DICOM_ERROR_BRAND: unique symbol = Symbol.for('@ubercode/dicom-parser/DicomError');
+
+/**
  * The error type thrown by all parser internals.
  *
  * `parse()` catches these and returns them in the failed {@link ParseResult}
@@ -39,6 +46,8 @@ export class DicomError extends Error {
     readonly code: DicomErrorCode;
     /** Byte offset where the failure was detected, when known. */
     readonly offset: number | undefined;
+    /** Cross-realm brand; see {@link isDicomError}. */
+    readonly [DICOM_ERROR_BRAND] = true;
 
     constructor(code: DicomErrorCode, message: string, options?: { readonly offset?: number; readonly cause?: unknown }) {
         super(message, options?.cause === undefined ? undefined : { cause: options.cause });
@@ -46,6 +55,18 @@ export class DicomError extends Error {
         this.code = code;
         this.offset = options?.offset;
     }
+}
+
+/**
+ * Duck-type guard for {@link DicomError} that is robust across the dual ESM/CJS
+ * build — prefer it to `instanceof DicomError`, which can fail when the error is
+ * constructed in one module format and checked in the other.
+ *
+ * @param value - The value to test
+ * @returns `true` when `value` is a `DicomError` (from any build)
+ */
+export function isDicomError(value: unknown): value is DicomError {
+    return typeof value === 'object' && value !== null && (value as Record<symbol, unknown>)[DICOM_ERROR_BRAND] === true;
 }
 
 /** Machine-readable warning categories. */
