@@ -46,6 +46,11 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
   differential over the in-repo corpus, and a DCMTK `dcmdump` writer-acceptance
   job (review B1). Deepened differential comparator; from-model numeric-writer
   round-trip coverage (review B2/B3/B4).
+- A **DCMTK `dcm2xml` read differential** as an independent CI oracle: the fork is
+  compared element-for-element against DCMTK's XML dump over the corpus (tag set,
+  byte length, VR, string/integer values). `dcm2xml` is used deliberately over
+  `dcm2json` (which transcodes charsets and hangs on compressed pixel data). Runs
+  in the DCMTK acceptance job under `REQUIRE_DCMTK=1`.
 
 ### Fixed
 

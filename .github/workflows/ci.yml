@@ -54,7 +54,7 @@ jobs:
             - run: pnpm install --frozen-lockfile
             - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends dcmtk
             - run: dcmdump --version
-            - run: pnpm exec vitest run tests/roundTrip.test.ts
+            - run: pnpm exec vitest run tests/roundTrip.test.ts tests/dcmtkXml.test.ts
               env:
                   REQUIRE_DCMTK: '1'
 
