@@ -54,6 +54,18 @@ export interface BulkRange {
     readonly offset: number;
     /** Value length in bytes (clamped to the source size on truncation). */
     readonly length: number;
+    /**
+     * The VR the walker saw: the explicit VR from the file, or `vrLookup`'s
+     * answer for an implicit-VR element; `undefined` when neither is available.
+     * For encapsulated PixelData this is the declared VR (`OB`/`OW`), not the
+     * DCMTK-normalized `OB` — use {@link encapsulated} to apply that yourself.
+     */
+    readonly vr?: string;
+    /**
+     * `true` when the range covers an encapsulated (undefined-length, fragmented)
+     * PixelData value; `false` for a plain defined-length bulk value.
+     */
+    readonly encapsulated?: boolean;
 }
 
 /** Options for {@link parseHeadAsync} (the subset of parse options that applies). */
@@ -236,6 +248,11 @@ function isBulk(header: ElementHeader, options: HeadOptions): boolean {
     return looked !== undefined && BULK_VRS.has(looked);
 }
 
+/** The VR the walker saw: the file's explicit VR, or `vrLookup` for implicit. */
+function seenVr(header: ElementHeader, options: HeadOptions): string | undefined {
+    return header.vr ?? options.vrLookup?.(header.tag);
+}
+
 /** Records a skipped bulk value and advances past it (clamping at EOF). */
 function skipBulk(walk: Walk, header: ElementHeader): void {
     const dataOffset = walk.offset + header.dataOffset;
@@ -244,7 +261,8 @@ function skipBulk(walk: Walk, header: ElementHeader): void {
         walk.warnings.push({ code: 'unexpected-eof', message: `value of ${tagToString(header.tag)} truncated`, offset: dataOffset });
         length = walk.source.size - dataOffset;
     }
-    walk.bulk.set(header.tag, { offset: dataOffset, length });
+    const vr = seenVr(header, walk.options);
+    walk.bulk.set(header.tag, { offset: dataOffset, length, encapsulated: false, ...(vr === undefined ? {} : { vr }) });
     walk.offset = dataOffset + length;
 }
 
@@ -328,7 +346,8 @@ async function skipEncapsulated(walk: Walk, header: ElementHeader): Promise<void
         at += length === UNDEFINED_LENGTH ? 0 : length;
     }
     at = Math.min(at, walk.source.size);
-    walk.bulk.set(header.tag, { offset: dataOffset, length: at - dataOffset });
+    const vr = seenVr(header, walk.options);
+    walk.bulk.set(header.tag, { offset: dataOffset, length: at - dataOffset, encapsulated: true, ...(vr === undefined ? {} : { vr }) });
     walk.offset = at;
 }
 
