@@ -126,6 +126,18 @@ each reproduced a real gap before merge):
   them), plus `createJpegBasicOffsetTable` multi-frame and implicit
   `scanUnknown`-via-`vrLookup` coverage. Coverage rose to 96.5/94.2/98.0/96.6.
 
+## External field review (MedFusion, 2026-07-23)
+
+A second, independent adversarial review came from the downstream MedFusion
+consumer (a 13-agent orchestrated review of the rc.1-staged tree). It confirmed
+five defects and a set of medium findings, all now fixed with byte-level
+regression tests verified against the reverted code (PRs #25–#30): the tokenizer
+consuming an ancestor's item delimiter (D1), the writer emitting a
+transfer-syntax/payload mismatch (D2), CJS type resolution (D3), and a cluster of
+`parse()`-never-throws / charset / meta-budget / big-endian-pixel / packaging
+items. Its wish list and remaining test-infra asks are the 2.1 roadmap. Full
+disposition: **PLAN.md §10**; per-change detail: CHANGELOG `[Unreleased]`.
+
 ## Documented (deliberately not fixed)
 
 - **W2 semantics** — duplicate tags collapse to the last value (Map semantics,

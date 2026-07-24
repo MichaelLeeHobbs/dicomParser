@@ -212,7 +212,7 @@ off here as they land.
 
 - [x] Coverage ≥ 95/90/95/95 with the full ported upstream suite + new fixture suites
 - [x] Fuzz suite (fast-check + corpus mutation) in CI — crash/hang/OOM = fail
-- [x] Bulk-parse benchmark vs recorded baseline (docs/benchmark.md; ~17% faster than 1.8.21) — comparative gate local (`pnpm run bench`), absolute budget in CI
+- [x] Bulk-parse + header-only benchmark vs recorded baseline (docs/benchmark.md; ~17% faster than 1.8.21 bulk, core beats legacy on the header-only hot path) — all benchmark assertions are local (`pnpm run bench`, `BENCH=1`-gated); **CI runs no benchmarks** (field review D5)
 - [x] Round-trip gates: byte-identical re-serialization corpus (CI) + DCMTK accepts writer output (now a CI `acceptance` job that apt-installs DCMTK and runs the dcmdump gate under `REQUIRE_DCMTK=1`, PR #22) + fork-vs-1.8.21 differential over the in-repo corpus in the default CI job
 - [ ] Browser smoke suite (Vitest browser mode) — parse + DecompressionStream path
 
@@ -220,7 +220,7 @@ off here as they land.
 
 - [x] npm Trusted Publishing configured (repo + publish.yml) — no tokens anywhere (done 2026-07-23; tag push withheld pending explicit go-ahead)
 - [ ] Provenance badge visible on npm after first CI-driven publish
-- [ ] `latest` dist-tag correct after 2.0.0 final (overwrites the forced alpha `latest`)
+- [ ] `latest` dist-tag correct after 2.0.0 final (overwrites the forced alpha `latest`). **Interim (field review D4):** `npm view` shows `latest = 2.0.0-alpha.0`, so a plain install pulls an alpha — run `npm deprecate @ubercode/dicom-parser@2.0.0-alpha.0 "prerelease — pin explicitly"` now, and repoint `latest` when rc.1 publishes.
 - [ ] Version lineage documented: 2.x here vs upstream 1.x; deprecation guidance for
       `dicom-parser` consumers
 
@@ -235,3 +235,58 @@ off here as they land.
 
 - [ ] dcmtk.js swapped and soaking in d-dart (Phase 6 gate)
 - [ ] Upstream outreach decision made and, if pursued, PR/issue opened referencing #214 (Phase 7)
+
+## 10. MedFusion field review (2026-07-23) — 2.0 fixes landed + 2.1 roadmap
+
+A 13-agent field review from the downstream MedFusion (Valor teleradiology) consumer, run
+against the rc.1-staged tree, with every high-severity finding adversarially re-verified.
+The MedFusion-internal evidence stays in that private repo; only the fork-facing dispositions
+are recorded here.
+
+**Fixed for 2.0 (PRs #25–#30), each with a byte-level regression test verified against the
+reverted code:**
+
+- **D1** — a defined-length item ending at its exact bound consumed an ancestor's `FFFE,E00D`
+  (silent structural corruption of conformant files). Bound-completion now precedes the
+  delimiter peek. (#25)
+- **§3 never-throws** — a speculative sequence fallback crossing `maxElements` threw out of
+  `parse()`; the fallback add is now guarded. **§3 nested encapsulated** — undefined-length
+  encapsulated pixel data is bounded by its enclosing item, not the stream. (#26)
+- **§3 charset** — a present-but-empty `(0008,0005)` declares the default repertoire (not
+  inherit/`assume`). **§3 meta budget** — the meta group honors caller `maxElements`/`maxDepth`. (#27)
+- **D2** — `writeFile` rejects a transfer-syntax/pixel-data payload mismatch. **§3** —
+  `nativePixelDataView` byte-swaps BE pixels; `isFragmentEndOfImage` short-fragment guard. (#28)
+- **D3** — nested CJS `types` in `exports` + `attw` gate in CI/prepublish. **D5** — header-only
+  benchmark (the real hot path). **§3** — `engines >=20.16`; deflate-cap docs → 256 MiB. (#29)
+- **§3 stopAt flip** — core `stopAt.inclusive` defaults to `false` (breaking vs alpha; compat
+  pins `true`). **§3** — `isDicomError()` guard; `TAG_SPECIFIC_CHARACTER_SET` export; compat
+  `version` = `VERSION`; meta charset context; README/migration doc fixes. (#30)
+
+**D4 (release, needs a human):** `npm deprecate` the alpha now; repoint `latest` at rc.1 —
+tracked in §9 → Release engineering.
+
+**Deferred to 2.1 — the MedFusion wish list (§4 of the review).** Grounded in real consumer
+workarounds; ordered by their stated priority. None are 2.0 blockers.
+
+- **P0 — ingest hot path.** W1 streaming/push parser (`parser.write(chunk)`, wanted-tag
+  resolution, "have everything before PixelData" signal) — the largest ask; the iterative
+  frame-stack tokenizer is architecturally close to resumable. W2 typed `needMoreBytes`
+  truncation outcome with a byte-requirement hint (and meta-truncation distinguished from
+  corruption). W3 stop-once-resolved tag _sets_ / group-bound stops (for SR/PDF/RTSTRUCT with
+  no tag ≥ PixelData).
+- **P1 — serve / DICOMweb.** W4 shipped PS3.6 dictionary as a tree-shakeable `/dictionary`
+  subpath (keeps the core zero-dep). W5 DICOM-JSON (PS3.18 Annex F) serializer. W6 lazy
+  bulkdata / per-frame offsets from a prefix + Extended Offset Table `(7FE0,0001)`. W7
+  `isValidUid()` helper. W8 FMI builder knobs (`(0002,0016)`, implementation identity). W9
+  documented zero-copy/detach semantics.
+- **P2 — quality of life.** W10 streaming/sink write (also the §3 ~3× peak). W11 nested +
+  predicate edits in `modifyDataSet` (anonymization shapes). W12 deliberate-malformation
+  fixture knobs. W13 bulk multi-value accessors (`asNumbers()`/`strings()`). W14 transcode
+  substrate — already satisfied; keep codecs out of the core.
+
+**Deferred to 2.1 — test/release engineering (§5 of the review).** The acceptance oracles
+already run in CI (B1, PR #22) and the differential recurses into sequence items (B2/B3);
+remaining: diversify the differential corpus beyond the brain-MR monoculture (US multiframe,
+SR, BE, private-heavy vendor files, and the `bad/` malformed set with expected-divergence
+annotations) — needs real vendor fixtures, so it is a data-sourcing task; and a nightly
+high-`numRuns` fuzz job seeded with the full corpus + a persisted crash-regression corpus.
