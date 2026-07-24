@@ -293,9 +293,31 @@ function decodeMixed(bytes: Uint8Array, g0: SegmentDecoder, g1: SegmentDecoder |
 }
 
 /**
+ * Value/line delimiters at which the ISO 2022 designations reset to the initial
+ * state: HT, LF, FF, CR, and the multi-value backslash. (`^`/`=` are PN-specific
+ * and need the VR, so they are not reset here.)
+ */
+const RESET_DELIMITERS: ReadonlySet<number> = new Set([0x09, 0x0a, 0x0c, 0x0d, 0x5c]);
+
+/**
+ * Whether a decoder replaces the G0/ASCII code area with a multi-byte set (JIS X
+ * 0208/0212). While one is active, a GL byte such as 0x5C is a character byte, not
+ * a delimiter — so delimiter reset is suppressed (DCMTK: `checkDelimiters` is
+ * false for ISO 2022 IR 87/159).
+ */
+function isMultiByteG0(decoder: SegmentDecoder): boolean {
+    return decoder.kind === 'iso2022jp' || decoder.kind === 'jis0212';
+}
+
+/**
  * Decodes a byte run containing ISO 2022 escape sequences. Escapes designate a
  * decoder into the G0 or G1 register; data bytes are then routed by their range
  * (GL→G0, GR→G1). Unrecognized escapes leave both registers unchanged.
+ *
+ * At a value/line delimiter the designations reset to the initial state — unless
+ * a multi-byte G0 set is active, where GL bytes are character bytes (PS3.5
+ * C.12.1.1.2; matches DCMTK's `checkDelimiters`). This resets a leaked single-byte
+ * G1 designation across a non-conformant delimiter that omitted the reset escape.
  */
 function decodeIso2022(bytes: Uint8Array, initialG0: SegmentDecoder, initialG1: SegmentDecoder | undefined): string {
     let out = '';
@@ -304,22 +326,30 @@ function decodeIso2022(bytes: Uint8Array, initialG0: SegmentDecoder, initialG1: 
     let segStart = 0;
     let i = 0;
     while (i < bytes.length) {
-        if (bytes[i] !== 0x1b) {
-            i++;
-            continue;
-        }
-        out += decodeMixed(bytes.subarray(segStart, i), g0, g1);
-        const esc = readEscape(bytes, i);
-        const designation = ESCAPE_DECODERS[esc.key];
-        if (designation !== undefined) {
-            if (designation.register === 'g0') {
-                g0 = designation.decoder;
-            } else {
-                g1 = designation.decoder;
+        const byte = bytes[i] as number;
+        if (byte === 0x1b) {
+            out += decodeMixed(bytes.subarray(segStart, i), g0, g1);
+            const esc = readEscape(bytes, i);
+            const designation = ESCAPE_DECODERS[esc.key];
+            if (designation !== undefined) {
+                if (designation.register === 'g0') {
+                    g0 = designation.decoder;
+                } else {
+                    g1 = designation.decoder;
+                }
             }
+            i += esc.length;
+            segStart = i;
+        } else if (RESET_DELIMITERS.has(byte) && !isMultiByteG0(g0)) {
+            out += decodeMixed(bytes.subarray(segStart, i), g0, g1);
+            out += String.fromCharCode(byte);
+            g0 = initialG0;
+            g1 = initialG1;
+            i += 1;
+            segStart = i;
+        } else {
+            i++;
         }
-        i += esc.length;
-        segStart = i;
     }
     out += decodeMixed(bytes.subarray(segStart), g0, g1);
     return out;
