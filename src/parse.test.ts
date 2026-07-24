@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { deflateRawSync, inflateRawSync } from 'node:zlib';
 import type { EncapsulatedElement, SequenceElement } from './element';
-import { inflateRaw, inflateRawAsync } from './inflate';
+import { DEFAULT_MAX_INFLATED_BYTES, inflateRaw, inflateRawAsync } from './inflate';
 import { TS_DEFLATED_LE, TS_EXPLICIT_BE, TS_EXPLICIT_LE, TS_GE_PRIVATE_DLX, TS_IMPLICIT_LE, parse, parseAsync } from './parse';
 import { readUiString } from './part10';
 import { tagFromString } from './tag';
@@ -157,6 +157,10 @@ describe('inflateRaw / inflateRawAsync', () => {
 
     it('round-trips via node:zlib', () => {
         expect(Array.from(inflateRaw(deflated))).toEqual(Array.from(payload));
+    });
+
+    it('pins the deflate-bomb default cap at 256 MiB (docs must match — review §3)', () => {
+        expect(DEFAULT_MAX_INFLATED_BYTES).toBe(256 * 1024 * 1024);
     });
 
     it('prefers an injected inflater', () => {
