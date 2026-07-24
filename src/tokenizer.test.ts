@@ -735,6 +735,32 @@ describe('readElements — malformed-input containment (adversarial review #1-#7
         expect(result.elements.has(0)).toBe(false);
         expect(result.elements.has(tagFromString('x00100010'))).toBe(true);
     });
+
+    it('§3: a fallback opaque value that trips maxElements yields a partial result, not a thrown parse', () => {
+        // (0009,0010) implicit, vrLookup→SQ, defined length 8, content not an item
+        // tag → pushItem throws malformed → recoverToFallback adds the opaque value,
+        // which crosses maxElements. That add must not throw out of run()'s catch.
+        const el = [0x09, 0x00, 0x10, 0x00, ...u32(8), 0x08, 0x00, 0x18, 0x00, ...u32(2)];
+        const vrLookup = (t: number): string | undefined => (t === 0x00090010 ? 'SQ' : undefined);
+        expect(() => readElements(streamOf(el), { explicitVr: false, vrLookup, maxElements: 1 })).not.toThrow();
+        const result = readElements(streamOf(el), { explicitVr: false, vrLookup, maxElements: 1 });
+        expect(result.elements.get(tagFromString('x00090010'))?.kind).toBe('value'); // kept as opaque value
+    });
+
+    it('§3: undefined-length encapsulated pixel data nested in an item does not swallow a following root sibling', () => {
+        // PixelData (7FE0,0010) OB undefined length, missing its FFFE,E0DD, inside a
+        // defined-length item/SQ. Bounded by stream length it would read the root
+        // sibling's bytes as fragments; bounded by the item it stops cleanly.
+        const bot = [0xfe, 0xff, 0x00, 0xe0, ...u32(0)];
+        const frag = [0xfe, 0xff, 0x00, 0xe0, ...u32(4), 0xaa, 0xbb, 0xcc, 0xdd];
+        const pd = [0xe0, 0x7f, 0x10, 0x00, 0x4f, 0x42, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, ...bot, ...frag]; // no E0DD
+        const itemC = [0xfe, 0xff, 0x00, 0xe0, ...u32(pd.length), ...pd];
+        const sqB = [0x09, 0x00, 0x10, 0x00, 0x53, 0x51, 0x00, 0x00, ...u32(itemC.length), ...itemC];
+        const sib = [0x10, 0x00, 0x10, 0x00, 0x50, 0x4e, 0x04, 0x00, 0x44, 0x4f, 0x45, 0x20]; // (0010,0010) PN
+        const result = readElements(streamOf([...sqB, ...sib]), { explicitVr: true });
+        expect(result.error).toBeUndefined();
+        expect(result.elements.has(tagFromString('x00100010'))).toBe(true);
+    });
 });
 
 function sq_(element: unknown): SequenceElement {

@@ -8,6 +8,13 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ### Fixed
 
+- `parse()` no longer throws when a speculative sequence fallback crosses
+  `maxElements`: adding the single opaque fallback value is guarded like the
+  salvage path, so the limit surfaces as a partial result with a `limit-exceeded`
+  error on the next read instead of escaping the never-throws contract (review §3).
+- Undefined-length encapsulated pixel data nested in a sequence item is now
+  bounded by its enclosing item, not the whole stream — a missing `FFFE,E0DD` can
+  no longer make the fragment scan swallow a following sibling's bytes (review §3).
 - A defined-length sequence item ending at its exact bound no longer consumes an
   ancestor's item-delimitation item (`FFFE,E00D`). The bound-completion check now
   runs before the delimiter peek, so a conformant nested structure (a
