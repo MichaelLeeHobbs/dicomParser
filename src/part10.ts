@@ -22,6 +22,15 @@ export interface Part10Options {
      * dataset). Without it, headerless input is a `not-dicom` error.
      */
     readonly transferSyntax?: string;
+    /**
+     * Structure cap applied while parsing the file meta group, so a hostile
+     * group-2 amplification payload honors a memory-constrained caller's limit
+     * instead of only the built-in default (review §3). Note: the meta group and
+     * the main dataset are parsed in separate passes, so this bounds each pass.
+     */
+    readonly maxElements?: number;
+    /** Nesting-depth cap applied while parsing the file meta group (review §3). */
+    readonly maxDepth?: number;
 }
 
 /** Result of {@link readPart10Header}: always populated, even on failure. */
@@ -94,15 +103,17 @@ export function readPart10Header(bytes: Uint8Array, options: Part10Options = {})
         });
         return { meta: emptyMeta(bytes), transferSyntax: undefined, dataSetPosition: 0, isPart10: false, warnings, error };
     }
-    return readMetaGroup(bytes, metaPosition, warnings);
+    return readMetaGroup(bytes, metaPosition, warnings, options);
 }
 
 /** Parses group-0002 elements (explicit LE) up to the first non-meta tag. */
-function readMetaGroup(bytes: Uint8Array, metaPosition: number, warnings: ParseWarning[]): Part10Header {
+function readMetaGroup(bytes: Uint8Array, metaPosition: number, warnings: ParseWarning[], options: Part10Options): Part10Header {
     const stream = new ByteStream(bytes, { position: metaPosition, warnings });
     const result = readElements(stream, {
         explicitVr: true,
         stopAt: { tag: tag(0x0003, 0x0000), inclusive: false },
+        ...(options.maxElements === undefined ? {} : { maxElements: options.maxElements }),
+        ...(options.maxDepth === undefined ? {} : { maxDepth: options.maxDepth }),
     });
     const meta = new DicomDataSet(bytes, true, result.elements);
     const tsElement = result.elements.get(TAG_TRANSFER_SYNTAX_UID);

@@ -207,6 +207,15 @@ describe('parse — structure and options', () => {
         expect(uint16At(result, 'x00280010')).toBe(512);
     });
 
+    it('honors maxElements while parsing the file meta group (review §3)', () => {
+        // The generated meta group has 3 elements (group length, SOP class,
+        // transfer syntax); a caller cap of 2 must trip during meta parsing rather
+        // than being ignored in favor of the built-in default.
+        const result = parse(p10(TS.explicitLE, [explicitEl('00100010', 'PN', latin1('DOE '))]), { maxElements: 2 });
+        expect(result.ok).toBe(false);
+        expect(result.error?.code).toBe('limit-exceeded');
+    });
+
     it('passes vrLookup to implicit datasets', () => {
         const dataset = [implicitEl('00280010', Uint8Array.from([0x00, 0x02]))];
         const result = parse(p10(TS.implicitLE, dataset), { vrLookup: tag => (tag === 0x00280010 ? 'US' : undefined) });
@@ -306,6 +315,27 @@ describe('parse — charset-aware string decoding (#146)', () => {
         expect(items[0]?.dataSet.string('x00100010')).toBe('Müller');
         expect(items[1]?.dataSet.string('x00100010')).toBe('Люк');
         expect(items[1]?.dataSet.charset?.terms).toEqual(['ISO_IR 144']);
+    });
+
+    it('a present-but-empty (0008,0005) in an item resets to the default repertoire, not the parent charset', () => {
+        // PS3.5: a zero-length SpecificCharacterSet explicitly declares the default
+        // repertoire. Root is UTF-8; the item value 0xC3 0xA9 is 'é' in UTF-8, but
+        // under the single-byte default it must decode as the Latin-1 mojibake 'Ã©'.
+        const charsetEl = explicitEl('00080005', 'CS', latin1('ISO_IR 192'));
+        const emptyItem = concat([explicitEl('00080005', 'CS', new Uint8Array(0)), explicitEl('00100010', 'PN', Uint8Array.from([0xc3, 0xa9]))]);
+        const result = parse(p10(TS.explicitLE, [charsetEl, sqExplicit('00081140', [emptyItem])]));
+        expect(result.error).toBeUndefined();
+        const items = (result.dataSet.element('x00081140') as SequenceElement).items;
+        expect(items[0]?.dataSet.string('x00100010')).toBe('Ã©');
+    });
+
+    it('a present-but-empty (0008,0005) at the root overrides the assume option', () => {
+        // An explicit default-repertoire declaration wins over `assume`.
+        const emptyCharset = explicitEl('00080005', 'CS', new Uint8Array(0));
+        const pnEl = explicitEl('00100010', 'PN', Uint8Array.from([0xc3, 0xa9]));
+        const result = parse(p10(TS.explicitLE, [emptyCharset, pnEl]), { charset: { assume: 'ISO_IR 192' } });
+        expect(result.error).toBeUndefined();
+        expect(result.dataSet.string('x00100010')).toBe('Ã©');
     });
 });
 
