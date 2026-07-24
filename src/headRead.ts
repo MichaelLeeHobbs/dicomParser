@@ -54,6 +54,18 @@ export interface BulkRange {
     readonly offset: number;
     /** Value length in bytes (clamped to the source size on truncation). */
     readonly length: number;
+    /**
+     * The VR the walker saw: the explicit VR from the file, or `vrLookup`'s
+     * answer for an implicit-VR element; `undefined` when neither is available.
+     * For encapsulated PixelData this is the declared VR (`OB`/`OW`), not the
+     * DCMTK-normalized `OB` — use {@link encapsulated} to apply that yourself.
+     */
+    readonly vr?: string;
+    /**
+     * `true` when the range covers an encapsulated (undefined-length, fragmented)
+     * PixelData value; `false` for a plain defined-length bulk value.
+     */
+    readonly encapsulated?: boolean;
 }
 
 /** Options for {@link parseHeadAsync} (the subset of parse options that applies). */
@@ -244,7 +256,9 @@ function skipBulk(walk: Walk, header: ElementHeader): void {
         walk.warnings.push({ code: 'unexpected-eof', message: `value of ${tagToString(header.tag)} truncated`, offset: dataOffset });
         length = walk.source.size - dataOffset;
     }
-    walk.bulk.set(header.tag, { offset: dataOffset, length });
+    // `header.vr` is already the VR the walker saw — the stream's explicit VR, or
+    // (for implicit) the value `readImplicitElementHeader` stored from `vrLookup`.
+    walk.bulk.set(header.tag, { offset: dataOffset, length, encapsulated: false, ...(header.vr === undefined ? {} : { vr: header.vr }) });
     walk.offset = dataOffset + length;
 }
 
@@ -328,7 +342,7 @@ async function skipEncapsulated(walk: Walk, header: ElementHeader): Promise<void
         at += length === UNDEFINED_LENGTH ? 0 : length;
     }
     at = Math.min(at, walk.source.size);
-    walk.bulk.set(header.tag, { offset: dataOffset, length: at - dataOffset });
+    walk.bulk.set(header.tag, { offset: dataOffset, length: at - dataOffset, encapsulated: true, ...(header.vr === undefined ? {} : { vr: header.vr }) });
     walk.offset = at;
 }
 

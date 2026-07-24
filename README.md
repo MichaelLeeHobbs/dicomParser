@@ -85,7 +85,7 @@ const head = await parseHeadAsync({
     size: fileSize,
 });
 head.dataSet.string('x00100010'); // metadata parses exactly as a whole-file parse
-head.bulk.get(0x7fe00010); // { offset, length } of PixelData — fetch it yourself
+head.bulk.get(0x7fe00010); // { offset, length, vr, encapsulated } — fetch the bytes yourself
 head.bytesRead; // ≪ file size (≈98% less on pixel-data-dominant files)
 ```
 

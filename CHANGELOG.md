@@ -17,6 +17,10 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
   whole-file `parse`. ~83% fewer bytes read across the fixture corpus (98%+ on
   pixel-data-dominant files). Deflated transfer syntax is read whole (not seekable).
   The core home for dcmtk.js's bounded head-read (fork #59; unblocks the swap, #58).
+  Each `BulkRange` also carries the VR the walker saw (`vr` — explicit from the
+  file, or `vrLookup`'s answer for implicit) and an `encapsulated` flag, so a
+  consumer can reconstruct a skipped element's JSON (`{ vr }`, DCMTK-normalizing
+  encapsulated PixelData to `OB`) without re-reading the header bytes (#64).
 
 ## [2.0.0-rc.1] — 2026-07-24
 

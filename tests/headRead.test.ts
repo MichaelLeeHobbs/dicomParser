@@ -65,6 +65,12 @@ function assertMatchesFull(head: HeadResult, fileBytes: Uint8Array, label: strin
         const full_ = el as DicomElement;
         expect(range.offset, `${label}: bulk ${tag} offset`).toBe(full_.dataOffset);
         expect(range.length, `${label}: bulk ${tag} length`).toBe(full_.endOffset - full_.dataOffset);
+        expect(range.encapsulated ?? false, `${label}: bulk ${tag} encapsulated flag`).toBe(full_.kind === 'encapsulated');
+        // The stream-explicit VR must round-trip exactly; a lookup/none VR would
+        // differ from this vrLookup-free full parse, so only assert the former.
+        if (full_.vrSource === 'explicit') {
+            expect(range.vr, `${label}: bulk ${tag} vr`).toBe(full_.vr);
+        }
     }
 
     // The dataset must equal the full dataset minus the elided bulk tags.
@@ -264,6 +270,9 @@ describe('parseHeadAsync — edge cases, options, and fallbacks', () => {
         const head = await parseHeadAsync(memReader(bytes), { vrLookup });
         expect(head.bulk.has(0x00880200)).toBe(true);
         expect(head.dataSet.element(0x00880200)).toBeUndefined();
+        // The VR came from vrLookup (implicit VR carries none in the stream).
+        expect(head.bulk.get(0x00880200)?.vr).toBe('OB');
+        expect(head.bulk.get(0x00880200)?.encapsulated).toBe(false);
     });
 
     it('skips an explicit UN value that is not an implicit sequence', async () => {
@@ -271,6 +280,18 @@ describe('parseHeadAsync — edge cases, options, and fallbacks', () => {
         const head = await parseHeadAsync(memReader(bytes));
         expect(head.bulk.has(0x00410010)).toBe(true);
         expect(head.dataSet.string('x00080060')).toBe('CT');
+        // Explicit UN: VR is carried in the stream, not encapsulated.
+        expect(head.bulk.get(0x00410010)?.vr).toBe('UN');
+        expect(head.bulk.get(0x00410010)?.encapsulated).toBe(false);
+    });
+
+    it('records encapsulated PixelData with encapsulated=true and its declared VR', async () => {
+        const bytes = p10(TS.jpegBaseline, [explicitEl('00080060', 'CS', latin1('CT')), encapsulatedPixelData([blob], [0])]);
+        const head = await parseHeadAsync(memReader(bytes));
+        assertMatchesFull(head, bytes, 'encapsulated-vr');
+        const range = head.bulk.get(0x7fe00010);
+        expect(range?.encapsulated).toBe(true);
+        expect(range?.vr).toBe('OB'); // declared VR, not the DCMTK-normalized OB the consumer applies
     });
 
     it('stopAt inclusive includes (and skips) the triggering pixel data', async () => {
