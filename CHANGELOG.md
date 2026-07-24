@@ -49,6 +49,12 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ### Fixed
 
+- An undefined-length sequence closed by an item delimiter (`FFFE,E00D`) instead
+  of a sequence delimiter (`FFFE,E0DD`) — a known scanner quirk — now recovers and
+  keeps reading the rest of the stream (with a `missing-sequence-delimiter`
+  warning) instead of derailing into a `malformed` error and dropping every
+  element after the sequence. Matches DCMTK's `dcmReplaceWrongDelimitationItem`
+  behavior (verified against DCMTK `dcmdata` source).
 - `package.json` `exports` now nests `types` under the `import`/`require`
   conditions, so CJS TypeScript consumers resolve the emitted `.d.cts` files
   instead of the ESM-flavored `.d.ts` (fixes TS1479 "masquerading as ESM"). An

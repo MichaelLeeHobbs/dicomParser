@@ -698,6 +698,23 @@ describe('readElements — malformed-input containment (adversarial review #1-#7
         expect(seq.items[1]?.dataSet.element('x00100010')).toBeDefined(); // D's contents attributed to D
     });
 
+    it('DCMTK-parity: an undefined-length sequence closed by an item delimiter (FFFE,E00D) recovers, not derails', () => {
+        // A known scanner quirk: the sequence is closed with FFFE,E00D instead of
+        // FFFE,E0DD. Rather than deriving into a malformed error and losing the rest
+        // of the stream, the fork treats the stray item delimiter as the sequence
+        // terminator (matches DCMTK's dcmReplaceWrongDelimitationItem) and reads on.
+        const el = [0x08, 0x00, 0x18, 0x00, 0x55, 0x49, 2, 0, 0x31, 0x20]; // (0008,0018) UI len 2
+        const item = [0xfe, 0xff, 0x00, 0xe0, ...u32(0xffffffff), ...el, 0xfe, 0xff, 0x0d, 0xe0, ...u32(0)]; // undef item + its E00D
+        const sq = [0x08, 0x00, 0x40, 0x11, 0x53, 0x51, 0, 0, ...u32(0xffffffff), ...item, 0xfe, 0xff, 0x0d, 0xe0, ...u32(0)]; // SQ closed by E00D (wrong)
+        const sib = [0x10, 0x00, 0x10, 0x00, 0x50, 0x4e, 4, 0, 0x44, 0x4f, 0x45, 0x20]; // (0010,0010) PN
+        const stream = streamOf([...sq, ...sib]);
+        const result = readElements(stream, { explicitVr: true });
+        expect(result.error).toBeUndefined();
+        expect(sq_(result.elements.get(tagFromString('x00081140'))).items).toHaveLength(1);
+        expect(result.elements.has(tagFromString('x00100010'))).toBe(true); // the tail after the sequence survives
+        expect(stream.warnings.some(w => w.code === 'missing-sequence-delimiter')).toBe(true);
+    });
+
     it('#2: a defined-length encapsulated basic offset table overrunning the value falls back to opaque', () => {
         const enc = [0xe0, 0x7f, 0x10, 0x00, 0x4f, 0x42, 0x00, 0x00, ...u32(12), 0xfe, 0xff, 0x00, 0xe0, ...u32(40)];
         const result = readElements(streamOf(enc), { explicitVr: true, compressedTransferSyntax: true });
