@@ -71,6 +71,24 @@ Browser with deflated files (no zlib): `await parseAsync(bytes)` uses
 const result = parse(bytes, { stopAt: { tag: 'x7fe00010' } });
 ```
 
+### Bounded head-read (metadata without the bulk bytes)
+
+`parseHeadAsync` parses metadata over a `RangeReader` while skipping bulk value
+bytes — so peak memory (and I/O, e.g. S3 ranged GETs) tracks the metadata, not the
+file. Skipped values are reported as file-absolute ranges to fetch on demand.
+
+```ts
+import { parseHeadAsync } from '@ubercode/dicom-parser';
+
+const head = await parseHeadAsync({
+    read: (offset, length) => readRange(offset, length), // sync or async; fs, S3, buffer…
+    size: fileSize,
+});
+head.dataSet.string('x00100010'); // metadata parses exactly as a whole-file parse
+head.bulk.get(0x7fe00010); // { offset, length } of PixelData — fetch it yourself
+head.bytesRead; // ≪ file size (≈98% less on pixel-data-dominant files)
+```
+
 ### Lenient-mode options
 
 | Option                          | Purpose                                                                                          |
