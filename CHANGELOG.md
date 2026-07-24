@@ -6,6 +6,11 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ## [Unreleased]
 
+## [2.0.0-rc.1] — 2026-07-24
+
+The ground-up TypeScript rewrite over `dicom-parser` 1.8.21, plus the post-rewrite
+field-review and DCMTK-comparison hardening pass.
+
 ### Changed
 
 - **Breaking (vs alpha):** the core `stopAt.inclusive` default is now `false`
@@ -124,11 +129,7 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
   swallowing its sibling, with data misattributed and only soft warnings (MedFusion
   field review D1).
 
-## [2.0.0-rc.1] — unreleased
-
-The ground-up TypeScript rewrite. Highlights over `dicom-parser` 1.8.21:
-
-### Added
+### Added (the rewrite baseline)
 
 - **DICOM writing** (upstream #214's top ask): `writeFile`, `encodeDataSet`,
   `serializeParsed` (byte-identical round trips for conformant LE files),
@@ -166,7 +167,7 @@ The ground-up TypeScript rewrite. Highlights over `dicom-parser` 1.8.21:
 - Indexed `attributeTag` for multi-valued AT — #253.
 - Indexed accessor reads are bounds-checked against the element length.
 
-### Changed
+### Changed (the rewrite baseline)
 
 - Version lineage continues as 2.x; the 1.x API lives under `/compat`.
 - Explicit big endian is read-only (retired by DICOM); the write path is little-endian.
