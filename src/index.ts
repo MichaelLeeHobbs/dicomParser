@@ -49,7 +49,7 @@ export {
     type ParseOptions,
     type ParseResult,
 } from './parse';
-export { parseDA, parsePN, parseTM, type DicomDate, type DicomTime, type PersonName } from './valueParsers';
+export { isValidUid, parseDA, parsePN, parseTM, type DicomDate, type DicomTime, type PersonName } from './valueParsers';
 export {
     DEFAULT_CHARSET_CONTEXT,
     LATIN1_CHARSET_CONTEXT,

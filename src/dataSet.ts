@@ -248,4 +248,33 @@ export class DicomDataSet {
         const value = this.string(tag, index);
         return value === undefined || value === '' ? undefined : Number.parseInt(value, 10);
     }
+
+    /**
+     * Returns every backslash-separated string value (each trimmed like
+     * {@link string}), or `undefined` when the element is absent or empty — so a
+     * multi-valued read (VM > 1) does not loop an index. A single-valued element
+     * yields a one-element array.
+     */
+    strings(tag: TagLike): string[] | undefined {
+        const decoded = this.decodeString(tag);
+        return decoded === undefined ? undefined : decoded.split('\\').map(value => value.trim());
+    }
+
+    /**
+     * Returns every DS value parsed as a float, or `undefined` when the element
+     * is absent. Positionally aligned with {@link strings}; a component that is
+     * empty or not numeric is `NaN`.
+     */
+    floatStrings(tag: TagLike): number[] | undefined {
+        return this.strings(tag)?.map(value => (value === '' ? Number.NaN : Number.parseFloat(value)));
+    }
+
+    /**
+     * Returns every IS value parsed as an integer, or `undefined` when the
+     * element is absent. Positionally aligned with {@link strings}; a component
+     * that is empty or not numeric is `NaN`.
+     */
+    intStrings(tag: TagLike): number[] | undefined {
+        return this.strings(tag)?.map(value => (value === '' ? Number.NaN : Number.parseInt(value, 10)));
+    }
 }
