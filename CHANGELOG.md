@@ -16,6 +16,14 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ### Added
 
+- `isValidUid(value)` — validates a UID against the PS3.5 §9.1 grammar
+  (dot-separated leading-zero-free numeric components, length 1–64). Stricter than
+  a `[0-9.]` check: rejects empty components, leading/trailing dots and leading
+  zeros — relevant when UIDs are used as filesystem/object-store keys (field
+  review W7).
+- `DicomDataSet.strings` / `floatStrings` / `intStrings` — bulk multi-value
+  accessors that return every backslash-separated value at once, so a VM > 1 read
+  no longer loops an index (field review W13).
 - `isDicomError(value)` — a duck-type guard (exported) that is robust across the
   dual ESM/CJS build, where `instanceof DicomError` can fail. `parse`/`parseAsync`
   use it internally for the injected-inflater return-vs-rethrow decision (review §3).

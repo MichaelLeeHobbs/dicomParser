@@ -183,6 +183,18 @@ describe('DicomDataSet string accessors', () => {
         expect(dataSet.string('x12345678')).toBeUndefined();
         expect(dataSet.text('x12345678')).toBeUndefined();
     });
+
+    it('bulk accessors return every value without looping an index (W13)', () => {
+        expect(le().strings('x22114435')).toEqual(['1.2', '2.3']);
+        expect(le().floatStrings('x22114435')).toEqual([1.2, 2.3]);
+        expect(le().strings('x22114436')).toEqual(['1234']);
+        expect(le().intStrings('x22114436')).toEqual([1234]);
+        // absent or empty → undefined (aligned with the singular accessors)
+        expect(le().strings('x22114441')).toBeUndefined();
+        expect(le().strings('x12345678')).toBeUndefined();
+        expect(le().floatStrings('x12345678')).toBeUndefined();
+        expect(le().intStrings('x12345678')).toBeUndefined();
+    });
 });
 
 describe('DicomDataSet rawBytes', () => {

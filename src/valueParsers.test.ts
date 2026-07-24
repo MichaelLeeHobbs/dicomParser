@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DicomError } from './errors';
-import { parseDA, parsePN, parseTM } from './valueParsers';
+import { isValidUid, parseDA, parsePN, parseTM } from './valueParsers';
 
 // Ported from legacy util_test.js (parseDA, parseTM, parsePN sections).
 
@@ -101,5 +101,27 @@ describe('parsePN', () => {
 
     it('returns undefined for missing input', () => {
         expect(parsePN(undefined)).toBeUndefined();
+    });
+});
+
+describe('isValidUid (W7)', () => {
+    it('accepts well-formed UIDs', () => {
+        expect(isValidUid('1.2.840.10008.1.2.1')).toBe(true);
+        expect(isValidUid('0')).toBe(true);
+        expect(isValidUid('1.0.2')).toBe(true);
+        expect(isValidUid('2.25.331717632425659486778196813677143528292')).toBe(true);
+        expect(isValidUid('1'.repeat(64))).toBe(true); // exactly 64 chars
+    });
+
+    it('rejects malformed UIDs, path-traversal and over-length values', () => {
+        expect(isValidUid('')).toBe(false);
+        expect(isValidUid('1'.repeat(65))).toBe(false); // over 64
+        expect(isValidUid('1..2')).toBe(false); // empty component
+        expect(isValidUid('.1.2')).toBe(false); // leading dot
+        expect(isValidUid('1.2.')).toBe(false); // trailing dot
+        expect(isValidUid('01.2')).toBe(false); // leading zero
+        expect(isValidUid('1.2.a')).toBe(false); // non-digit
+        expect(isValidUid('../etc/passwd')).toBe(false); // path traversal
+        expect(isValidUid('1.2 ')).toBe(false); // unstripped padding
     });
 });

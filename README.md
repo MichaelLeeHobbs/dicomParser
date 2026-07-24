@@ -46,6 +46,7 @@ if (!result.ok) {
 result.dataSet.string('x00100010'); // 'Doe^Jane' (charset-aware)
 result.dataSet.uint16(0x00280010); // 512 — tags as numbers or 'xggggeeee' strings
 result.dataSet.uint64('x00091001'); // BigInt for SV/UV
+result.dataSet.floatStrings('x00200037'); // [1,0,0,0,1,0] — all VM>1 values, no index loop
 result.transferSyntax; // '1.2.840.10008.1.2.1'
 result.meta.string('x00020002'); // file meta group is separate from the dataset
 result.warnings; // structured { code, message, offset } anomalies

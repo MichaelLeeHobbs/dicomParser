@@ -276,13 +276,15 @@ workarounds; ordered by their stated priority. None are 2.0 blockers.
   no tag ≥ PixelData).
 - **P1 — serve / DICOMweb.** W4 shipped PS3.6 dictionary as a tree-shakeable `/dictionary`
   subpath (keeps the core zero-dep). W5 DICOM-JSON (PS3.18 Annex F) serializer. W6 lazy
-  bulkdata / per-frame offsets from a prefix + Extended Offset Table `(7FE0,0001)`. W7
-  `isValidUid()` helper. W8 FMI builder knobs (`(0002,0016)`, implementation identity). W9
-  documented zero-copy/detach semantics.
+  bulkdata / per-frame offsets from a prefix + Extended Offset Table `(7FE0,0001)`. W8 FMI
+  builder knobs (`(0002,0016)`, implementation identity). W9 documented zero-copy/detach
+  semantics.
 - **P2 — quality of life.** W10 streaming/sink write (also the §3 ~3× peak). W11 nested +
   predicate edits in `modifyDataSet` (anonymization shapes). W12 deliberate-malformation
-  fixture knobs. W13 bulk multi-value accessors (`asNumbers()`/`strings()`). W14 transcode
-  substrate — already satisfied; keep codecs out of the core.
+  fixture knobs. W14 transcode substrate — already satisfied; keep codecs out of the core.
+
+**Pulled into 2.0** (small, high-leverage, done): **W7** `isValidUid()` (PS3.5 §9.1 grammar,
+exported) and **W13** bulk accessors `DicomDataSet.strings`/`floatStrings`/`intStrings`.
 
 **Deferred to 2.1 — test/release engineering (§5 of the review).** The acceptance oracles
 already run in CI (B1, PR #22) and the differential recurses into sequence items (B2/B3);

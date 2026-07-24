@@ -147,3 +147,34 @@ export function parsePN(personName: string | undefined): PersonName | undefined 
         suffix: values[4],
     };
 }
+
+/** A single UID component: `0`, or a run of digits with no leading zero. */
+const UID_COMPONENT = /^(0|[1-9]\d*)$/;
+
+/**
+ * Validates a DICOM UID (VR UI) against the PS3.5 §9.1 grammar: dot-separated
+ * numeric components, each either `0` or a leading-zero-free run of digits, with
+ * a total length of 1–64 characters. Any trailing NUL/space padding must already
+ * be stripped (as `string('…')` / `readUiString` do).
+ *
+ * This is stricter than a `[0-9.]` character-class check: it rejects empty
+ * components (`1..2`), leading/trailing dots, and leading zeros. That strictness
+ * matters when UIDs are used as filesystem or object-store keys, where `..` or an
+ * empty segment is a path-traversal surface — validate untrusted UIDs before
+ * using them as keys.
+ *
+ * @param value - The UID string (padding already stripped)
+ * @returns `true` when `value` is a well-formed UID
+ */
+export function isValidUid(value: string): boolean {
+    if (value.length === 0 || value.length > 64) {
+        return false;
+    }
+    const components = value.split('.');
+    for (const component of components) {
+        if (!UID_COMPONENT.test(component)) {
+            return false;
+        }
+    }
+    return true;
+}
