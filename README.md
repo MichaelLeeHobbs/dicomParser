@@ -134,7 +134,7 @@ import { dictionaryVrLookup } from '@ubercode/dicom-parser/dictionary';
 const result = parse(bytes, { vrLookup: dictionaryVrLookup });
 const json = toDicomJson(result.dataSet, {
     vrLookup: dictionaryVrLookup,
-    bulkDataUri: el => (el.tag === 0x7fe00010 ? `${base}/bulk/pixeldata` : undefined),
+    bulkDataUri: el => (el.tag === 0x7fe00010 ? 'https://pacs.example.com/bulk/pixeldata' : undefined),
 });
 // spec-complete /metadata payload: JSON.stringify(json)
 ```

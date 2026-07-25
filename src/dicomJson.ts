@@ -81,19 +81,24 @@ const NUMERIC: Readonly<Record<string, NumericReader>> = {
 
 const BASE64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
-/** Dependency-free base64 (Buffer/btoa are not available on every target). */
+/**
+ * Dependency-free base64 (Buffer/btoa are not available on every target),
+ * built in chunks and joined once — repeated string concatenation is
+ * quadratic-prone on large values such as inlined Pixel Data.
+ */
 function toBase64(bytes: Uint8Array): string {
-    let result = '';
-    for (let i = 0; i < bytes.length; i += 3) {
+    const parts = new Array<string>(Math.ceil(bytes.length / 3));
+    for (let i = 0, o = 0; i < bytes.length; i += 3, o++) {
         const b0 = bytes[i] as number;
         const b1 = bytes[i + 1];
         const b2 = bytes[i + 2];
-        result += BASE64_ALPHABET[b0 >> 2] as string;
-        result += BASE64_ALPHABET[((b0 & 0x03) << 4) | ((b1 ?? 0) >> 4)] as string;
-        result += b1 === undefined ? '=' : (BASE64_ALPHABET[((b1 & 0x0f) << 2) | ((b2 ?? 0) >> 6)] as string);
-        result += b2 === undefined ? '=' : (BASE64_ALPHABET[b2 & 0x3f] as string);
+        parts[o] =
+            (BASE64_ALPHABET[b0 >> 2] as string) +
+            (BASE64_ALPHABET[((b0 & 0x03) << 4) | ((b1 ?? 0) >> 4)] as string) +
+            (b1 === undefined ? '=' : (BASE64_ALPHABET[((b1 & 0x0f) << 2) | ((b2 ?? 0) >> 6)] as string)) +
+            (b2 === undefined ? '=' : (BASE64_ALPHABET[b2 & 0x3f] as string));
     }
-    return result;
+    return parts.join('');
 }
 
 function hex8(tag: Tag): string {
@@ -147,16 +152,18 @@ function binaryAttribute(vr: string, element: DicomElement, source: DicomDataSet
 }
 
 function numericValues(reader: NumericReader, source: DicomDataSet, element: DicomElement): unknown[] {
-    const count = Math.floor(element.length / reader.size);
+    // ceil + null: a malformed length that is not a multiple of the value size
+    // surfaces its partial trailing value as null instead of silently dropping
+    const count = Math.ceil(element.length / reader.size);
     const values: unknown[] = [];
     for (let i = 0; i < count; i++) {
-        values.push(reader.read(source, element.tag, i));
+        values.push(reader.read(source, element.tag, i) ?? null);
     }
     return values;
 }
 
 function big64Values(vr: string, source: DicomDataSet, element: DicomElement): unknown[] {
-    const count = Math.floor(element.length / 8);
+    const count = Math.ceil(element.length / 8);
     const values: unknown[] = [];
     for (let i = 0; i < count; i++) {
         const value = vr === 'SV' ? source.int64(element.tag, i) : source.uint64(element.tag, i);
@@ -166,7 +173,7 @@ function big64Values(vr: string, source: DicomDataSet, element: DicomElement): u
 }
 
 function attributeTagValues(source: DicomDataSet, element: DicomElement): unknown[] {
-    const count = Math.floor(element.length / 4);
+    const count = Math.ceil(element.length / 4);
     const values: unknown[] = [];
     for (let i = 0; i < count; i++) {
         const value = source.attributeTag(element.tag, i);

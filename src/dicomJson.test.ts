@@ -67,6 +67,11 @@ describe('toDicomJson — per-VR value semantics (PS3.18 Annex F)', () => {
         expect(model['00280010']).toEqual({ vr: 'US', Value: [512, 513] });
     });
 
+    it('surfaces a partial trailing numeric value as null instead of dropping it (review)', () => {
+        const f = p10(TS.explicitLE, [explicitEl('00280010', 'US', Uint8Array.from([0x00, 0x02, 0x01, 0x02, 0x03]))]);
+        expect(toDicomJson(parse(f).dataSet)['00280010']).toEqual({ vr: 'US', Value: [512, 513, null] });
+    });
+
     it('renders AT values as 8-hex strings', () => {
         expect(model['00270010']).toEqual({ vr: 'AT', Value: ['00100010', '7FE00010'] });
     });
