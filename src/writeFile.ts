@@ -49,6 +49,8 @@ export interface WriteFileOptions {
     readonly deflate?: DeflateFn;
     /** Charset for string values ('latin1' default, 'utf8' for ISO_IR 192). */
     readonly charset?: EncodeOptions['charset'];
+    /** Meta-group knobs: implementation identity, (0002,0016), extra group-2 elements (#39). */
+    readonly meta?: MetaGroupOptions;
 }
 
 function findStringValue(dataSet: WriteDataSet, tag: TagLike): string | undefined {
@@ -68,26 +70,66 @@ function findStringValue(dataSet: WriteDataSet, tag: TagLike): string | undefine
     return out;
 }
 
+/** Options for {@link buildMetaGroup} — issue #39 (W8). */
+export interface MetaGroupOptions {
+    /** Overrides (0002,0012) ImplementationClassUID (default {@link IMPLEMENTATION_CLASS_UID}). */
+    readonly implementationClassUid?: string;
+    /** Overrides (0002,0013) ImplementationVersionName (default {@link IMPLEMENTATION_VERSION_NAME}). */
+    readonly implementationVersionName?: string;
+    /** Adds (0002,0016) SourceApplicationEntityTitle. */
+    readonly sourceApplicationEntityTitle?: string;
+    /**
+     * Additional group-2 elements (e.g. (0002,0017)/(0002,0018) or private
+     * meta elements), encoded in ascending tag order with the generated ones.
+     * Must be group 0002 and must not collide with a generated tag —
+     * violations are `invalid-argument` errors.
+     */
+    readonly extraElements?: readonly WriteElement[];
+}
+
+/** The group-2 tags {@link buildMetaGroup} generates itself. */
+const GENERATED_META_TAGS: ReadonlySet<number> = new Set([0x00020000, 0x00020001, 0x00020002, 0x00020003, 0x00020010, 0x00020012, 0x00020013]);
+
+/** Validates and merges caller meta elements with the generated set (#39). */
+function metaElements(identifiers: readonly [string, string, string], options: MetaGroupOptions): WriteElement[] {
+    const [transferSyntax, sopClassUid, sopInstanceUid] = identifiers;
+    const elements = [
+        element(0x00020001, 'OB', Uint8Array.from([0x00, 0x01])),
+        element(0x00020002, 'UI', sopClassUid),
+        element(0x00020003, 'UI', sopInstanceUid),
+        element(0x00020010, 'UI', transferSyntax),
+        element(0x00020012, 'UI', options.implementationClassUid ?? IMPLEMENTATION_CLASS_UID),
+        element(0x00020013, 'SH', options.implementationVersionName ?? IMPLEMENTATION_VERSION_NAME),
+    ];
+    if (options.sourceApplicationEntityTitle !== undefined) {
+        elements.push(element(0x00020016, 'AE', options.sourceApplicationEntityTitle));
+    }
+    const seen = new Set<number>(elements.map(el => el.tag));
+    for (const extra of options.extraElements ?? []) {
+        if (extra.tag >>> 16 !== 0x0002) {
+            throw new DicomError('invalid-argument', `meta extraElements must be group 0002; got ${tagToString(extra.tag)}`);
+        }
+        if (GENERATED_META_TAGS.has(extra.tag) || seen.has(extra.tag)) {
+            throw new DicomError('invalid-argument', `meta extraElements may not duplicate ${tagToString(extra.tag)}`);
+        }
+        seen.add(extra.tag);
+        elements.push(extra);
+    }
+    return elements.sort((a, b) => a.tag - b.tag);
+}
+
 /**
  * Builds the file meta group (group 0002) with a correct group length.
  *
  * @param transferSyntax - The dataset transfer syntax UID
  * @param sopClassUid - Media Storage SOP Class UID
  * @param sopInstanceUid - Media Storage SOP Instance UID
+ * @param options - Implementation-identity overrides and extra group-2 elements (#39)
  * @returns The encoded meta group bytes (always explicit little endian)
+ * @throws DicomError `invalid-argument` for non-group-2 or colliding extras
  */
-export function buildMetaGroup(transferSyntax: string, sopClassUid: string, sopInstanceUid: string): Uint8Array {
-    const afterLength = encodeDataSet(
-        buildDataSet([
-            element(0x00020001, 'OB', Uint8Array.from([0x00, 0x01])),
-            element(0x00020002, 'UI', sopClassUid),
-            element(0x00020003, 'UI', sopInstanceUid),
-            element(0x00020010, 'UI', transferSyntax),
-            element(0x00020012, 'UI', IMPLEMENTATION_CLASS_UID),
-            element(0x00020013, 'SH', IMPLEMENTATION_VERSION_NAME),
-        ]),
-        { explicitVr: true }
-    );
+export function buildMetaGroup(transferSyntax: string, sopClassUid: string, sopInstanceUid: string, options: MetaGroupOptions = {}): Uint8Array {
+    const afterLength = encodeDataSet(buildDataSet(metaElements([transferSyntax, sopClassUid, sopInstanceUid], options)), { explicitVr: true });
     const lengthElement = encodeDataSet(buildDataSet([element(0x00020000, 'UL', [afterLength.length])]), { explicitVr: true });
     const out = new Uint8Array(lengthElement.length + afterLength.length);
     out.set(lengthElement, 0);
@@ -156,7 +198,7 @@ export function writeFile(options: WriteFileOptions): Uint8Array {
     }
     const sopClassUid = options.sopClassUid ?? findStringValue(options.dataSet, 0x00080016) ?? '';
     const sopInstanceUid = options.sopInstanceUid ?? findStringValue(options.dataSet, 0x00080018) ?? '';
-    const meta = buildMetaGroup(transferSyntax, sopClassUid, sopInstanceUid);
+    const meta = buildMetaGroup(transferSyntax, sopClassUid, sopInstanceUid, options.meta ?? {});
     const dataSetBytes = encodedDataSetFor(options, transferSyntax);
     const out = new Uint8Array(128 + 4 + meta.length + dataSetBytes.length);
     out.set(preamble, 0);

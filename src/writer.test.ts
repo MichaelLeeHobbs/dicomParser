@@ -224,6 +224,51 @@ describe('writeFile', () => {
         expect(result.dataSet.string('x00020012')).toMatch(/^2\.25\./);
         expect(result.dataSet.string('x00020013')).toBe('UBERCODE_DP2');
     });
+
+    it('buildMetaGroup accepts implementation-identity overrides and extra group-2 elements (#39)', () => {
+        const meta = buildMetaGroup(TS_EXPLICIT_LE, '1.2', '3.4', {
+            implementationClassUid: '1.2.826.0.1.999999',
+            implementationVersionName: 'MYAPP_1_0',
+            sourceApplicationEntityTitle: 'STORESCP',
+            extraElements: [element('00020017', 'AE', 'SENDER'), element('00020018', 'AE', 'RECEIVER')],
+        });
+        const result = parse(meta, { transferSyntax: TS_EXPLICIT_LE });
+        expect(result.ok).toBe(true);
+        expect(result.dataSet.string('x00020012')).toBe('1.2.826.0.1.999999');
+        expect(result.dataSet.string('x00020013')).toBe('MYAPP_1_0');
+        expect(result.dataSet.string('x00020016')).toBe('STORESCP');
+        expect(result.dataSet.string('x00020017')).toBe('SENDER');
+        expect(result.dataSet.string('x00020018')).toBe('RECEIVER');
+        // elements ascend, and the group length covers the extras
+        const tags = [...result.dataSet.elements.keys()];
+        expect([...tags].sort((a, b) => a - b)).toEqual(tags);
+        expect(result.dataSet.uint32('x00020000')).toBe(meta.length - 12);
+    });
+
+    it('buildMetaGroup rejects non-group-2 and colliding extras (#39)', () => {
+        expect(() => buildMetaGroup(TS_EXPLICIT_LE, '1.2', '3.4', { extraElements: [element('00080018', 'UI', '1.2')] })).toThrow(/group 0002/);
+        expect(() => buildMetaGroup(TS_EXPLICIT_LE, '1.2', '3.4', { extraElements: [element('00020010', 'UI', '1.2')] })).toThrow(/duplicate/);
+        expect(() =>
+            buildMetaGroup(TS_EXPLICIT_LE, '1.2', '3.4', {
+                sourceApplicationEntityTitle: 'AET',
+                extraElements: [element('00020016', 'AE', 'OTHER')],
+            })
+        ).toThrow(/duplicate/);
+        expect(() => buildMetaGroup(TS_EXPLICIT_LE, '1.2', '3.4', { extraElements: [element('00020017', 'AE', 'A'), element('00020017', 'AE', 'B')] })).toThrow(
+            /duplicate/
+        );
+    });
+
+    it('writeFile threads meta options through to the generated header (#39)', () => {
+        const file = writeFile({
+            dataSet: dataSet([element('00080018', 'UI', '9.9.9')]),
+            meta: { sourceApplicationEntityTitle: 'INGEST_SCP', implementationVersionName: 'OIE_2' },
+        });
+        const result = parse(file);
+        expect(result.ok).toBe(true);
+        expect(result.meta.string('x00020016')).toBe('INGEST_SCP');
+        expect(result.meta.string('x00020013')).toBe('OIE_2');
+    });
 });
 
 describe('modifyDataSet (parse → modify → serialize)', () => {

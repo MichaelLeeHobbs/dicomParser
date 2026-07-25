@@ -93,6 +93,7 @@ export {
     serializeParsed,
     writeFile,
     type DataSetEdits,
+    type MetaGroupOptions,
     type DeflateFn,
     type SerializeParsedOptions,
     type WriteFileOptions,
