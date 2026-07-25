@@ -41,6 +41,12 @@ export interface EncodeOptions {
      * the *declared* structure is corrupted, which is the point.
      */
     readonly nonConformant?: boolean;
+    /**
+     * Bytes buffered before each flush in the sink variants (default 64 KiB).
+     * Values larger than the buffer — pixel fragments, big opaque values — are
+     * passed to the sink directly and never enter it.
+     */
+    readonly chunkSize?: number;
 }
 
 /**
@@ -263,23 +269,41 @@ function sizeElement(el: SizedElement, explicitVr: boolean, nonConformant: boole
     el.totalSize = headerSize(el, explicitVr) + el.contentSize + (el.undefinedLength ? 8 : 0);
 }
 
-class Emitter {
-    readonly bytes: Uint8Array;
-    private readonly view: DataView;
-    position = 0;
+/**
+ * Where encoded bytes go. Two implementations share the one token loop: a
+ * buffer target (write into a caller's array at an offset) and a sink target
+ * (flush fixed-size chunks as they fill, for streaming writes) — #41.
+ */
+interface Emitter {
+    /** Bytes emitted so far, used by the exact-size assertion. */
+    readonly position: number;
+    uint16(value: number): void;
+    uint32(value: number): void;
+    tag(value: Tag): void;
+    raw(bytes: Uint8Array): void;
+    ascii(value: string): void;
+}
 
-    constructor(size: number) {
-        this.bytes = new Uint8Array(size);
-        this.view = new DataView(this.bytes.buffer);
+/** Emits into a caller-supplied buffer at an offset — no assembly copy. */
+class BufferEmitter implements Emitter {
+    position = 0;
+    private readonly bytes: Uint8Array;
+    private readonly view: DataView;
+    private readonly start: number;
+
+    constructor(bytes: Uint8Array, offset: number) {
+        this.bytes = bytes;
+        this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+        this.start = offset;
     }
 
     uint16(value: number): void {
-        this.view.setUint16(this.position, value, true);
+        this.view.setUint16(this.start + this.position, value, true);
         this.position += 2;
     }
 
     uint32(value: number): void {
-        this.view.setUint32(this.position, value, true);
+        this.view.setUint32(this.start + this.position, value, true);
         this.position += 4;
     }
 
@@ -289,13 +313,87 @@ class Emitter {
     }
 
     raw(bytes: Uint8Array): void {
-        this.bytes.set(bytes, this.position);
+        this.bytes.set(bytes, this.start + this.position);
         this.position += bytes.length;
     }
 
     ascii(value: string): void {
         for (let i = 0; i < value.length; i++) {
-            this.bytes[this.position++] = value.charCodeAt(i);
+            this.bytes[this.start + this.position + i] = value.charCodeAt(i);
+        }
+        this.position += value.length;
+    }
+}
+
+/** Default bytes buffered before a sink flush. */
+const DEFAULT_CHUNK_SIZE = 64 * 1024;
+
+/**
+ * Emits to a sink in chunks, so peak memory is the chunk size rather than the
+ * whole file. Each flushed chunk is a fresh copy (safe to queue on a Node
+ * stream, which does not copy what it is handed); values larger than the
+ * chunk buffer bypass it entirely and reach the sink as a **view over the
+ * caller's own data** — zero-copy for pixel fragments, but only valid while
+ * that source is unmodified.
+ */
+class SinkEmitter implements Emitter {
+    position = 0;
+    private readonly sink: WriteSink;
+    private readonly buffer: Uint8Array;
+    private readonly view: DataView;
+    private filled = 0;
+
+    constructor(sink: WriteSink, chunkSize: number) {
+        this.sink = sink;
+        this.buffer = new Uint8Array(Math.max(16, chunkSize));
+        this.view = new DataView(this.buffer.buffer);
+    }
+
+    private reserve(size: number): number {
+        if (this.filled + size > this.buffer.length) {
+            this.flush();
+        }
+        const at = this.filled;
+        this.filled += size;
+        this.position += size;
+        return at;
+    }
+
+    uint16(value: number): void {
+        this.view.setUint16(this.reserve(2), value, true);
+    }
+
+    uint32(value: number): void {
+        this.view.setUint32(this.reserve(4), value, true);
+    }
+
+    tag(value: Tag): void {
+        this.uint16(Math.floor(value / 0x10000));
+        this.uint16(value % 0x10000);
+    }
+
+    raw(bytes: Uint8Array): void {
+        if (bytes.length > this.buffer.length) {
+            this.flush(); // keep ordering, then hand the payload over uncopied
+            this.position += bytes.length;
+            this.sink(bytes);
+            return;
+        }
+        this.buffer.set(bytes, this.reserve(bytes.length));
+    }
+
+    ascii(value: string): void {
+        const at = this.reserve(value.length);
+        for (let i = 0; i < value.length; i++) {
+            this.buffer[at + i] = value.charCodeAt(i);
+        }
+    }
+
+    /** Flushes whatever is buffered; call once after the last write. */
+    flush(): void {
+        if (this.filled > 0) {
+            this.sink(this.buffer.slice(0, this.filled));
+            this.filled = 0;
         }
     }
 }
@@ -349,6 +447,49 @@ function pushElementContent(tokens: EmitToken[], el: SizedElement, emitter: Emit
     }
 }
 
+/** Receives encoded chunks in order; see {@link encodeDataSetTo}. */
+export type WriteSink = (chunk: Uint8Array) => void;
+
+/** A sized encoding plan: the two-pass design's first pass, reusable. */
+interface EncodePlan {
+    readonly sized: readonly SizedElement[];
+    readonly explicitVr: boolean;
+    /** Exact encoded size in bytes. */
+    readonly total: number;
+}
+
+/** Runs the sizing pass (validating as it goes) without emitting anything. */
+function planEncode(dataSet: WriteDataSet, options: EncodeOptions): EncodePlan {
+    const explicitVr = options.explicitVr ?? true;
+    const sized = normalize(dataSet.elements, explicitVr, { charset: options.charset ?? 'latin1', nonConformant: options.nonConformant === true });
+    return { sized, explicitVr, total: sized.reduce((sum, el) => sum + el.totalSize, 0) };
+}
+
+/** Emits a plan through any {@link Emitter}, asserting exact byte accounting. */
+function emitPlan(plan: EncodePlan, emitter: Emitter): void {
+    const tokens: EmitToken[] = [];
+    for (let i = plan.sized.length - 1; i >= 0; i--) {
+        tokens.push({ kind: 'element', el: plan.sized[i] as SizedElement, explicitVr: plan.explicitVr });
+    }
+    emitTokens(emitter, tokens);
+    if (emitter.position !== plan.total) {
+        throw new DicomError('invalid-argument', `internal: encoded ${emitter.position} bytes, expected ${plan.total}`);
+    }
+}
+
+/**
+ * Exact encoded size of a dataset, without emitting it — so a caller can
+ * allocate once and encode straight into that buffer (#41).
+ *
+ * @param dataSet - The elements to size, in ascending tag order
+ * @param options - VR mode and string charset (must match the later encode)
+ * @returns The byte length {@link encodeDataSet} would produce
+ * @throws DicomError `invalid-argument` on unencodable input
+ */
+export function encodedLength(dataSet: WriteDataSet, options: EncodeOptions = {}): number {
+    return planEncode(dataSet, options).total;
+}
+
 /**
  * Encodes a dataset (no preamble/meta) to little-endian bytes.
  *
@@ -359,19 +500,57 @@ function pushElementContent(tokens: EmitToken[], el: SizedElement, emitter: Emit
  *         missing VRs in explicit mode, bad value/VR combinations)
  */
 export function encodeDataSet(dataSet: WriteDataSet, options: EncodeOptions = {}): Uint8Array {
-    const explicitVr = options.explicitVr ?? true;
-    const sized = normalize(dataSet.elements, explicitVr, { charset: options.charset ?? 'latin1', nonConformant: options.nonConformant === true });
-    const total = sized.reduce((sum, el) => sum + el.totalSize, 0);
-    const emitter = new Emitter(total);
-    const tokens: EmitToken[] = [];
-    for (let i = sized.length - 1; i >= 0; i--) {
-        tokens.push({ kind: 'element', el: sized[i] as SizedElement, explicitVr });
+    const plan = planEncode(dataSet, options);
+    const bytes = new Uint8Array(plan.total);
+    emitPlan(plan, new BufferEmitter(bytes, 0));
+    return bytes;
+}
+
+/**
+ * Encodes a dataset into a caller-supplied buffer at `offset`, avoiding the
+ * intermediate allocation an assemble-then-copy flow needs (#41). Size the
+ * buffer with {@link encodedLength} using the same options.
+ *
+ * @param dataSet - The elements to encode, in ascending tag order
+ * @param target - Destination buffer, with room for the encoding at `offset`
+ * @param offset - Where to start writing (default 0)
+ * @param options - VR mode and string charset
+ * @returns The number of bytes written
+ * @throws DicomError `invalid-argument` when the target is too small, or on
+ *         unencodable input
+ */
+export function encodeDataSetInto(dataSet: WriteDataSet, target: Uint8Array, offset = 0, options: EncodeOptions = {}): number {
+    const plan = planEncode(dataSet, options);
+    if (!Number.isInteger(offset) || offset < 0 || offset + plan.total > target.length) {
+        throw new DicomError('invalid-argument', `encodeDataSetInto: ${plan.total} bytes at offset ${offset} do not fit a ${target.length}-byte target`);
     }
-    emitTokens(emitter, tokens);
-    if (emitter.position !== total) {
-        throw new DicomError('invalid-argument', `internal: encoded ${emitter.position} bytes, expected ${total}`);
-    }
-    return emitter.bytes;
+    emitPlan(plan, new BufferEmitter(target, offset));
+    return plan.total;
+}
+
+/**
+ * Encodes a dataset to a sink in chunks, so peak memory tracks the chunk size
+ * rather than the file (#41) — the streaming write path.
+ *
+ * The sink is synchronous and is called in stream order; chunks it receives
+ * are either fresh copies or zero-copy views over the caller's own value bytes
+ * (see {@link SinkEmitter}), never a reused internal buffer, so they are safe
+ * to queue. Backpressure is the caller's: a Node `Writable` will buffer
+ * whatever it is given past its high-water mark, so throttle there if the
+ * destination is slower than the encoder.
+ *
+ * @param sink - Receives each chunk in order
+ * @param dataSet - The elements to encode, in ascending tag order
+ * @param options - VR mode, string charset and `chunkSize`
+ * @returns The total number of bytes written
+ * @throws DicomError `invalid-argument` on unencodable input
+ */
+export function encodeDataSetTo(sink: WriteSink, dataSet: WriteDataSet, options: EncodeOptions = {}): number {
+    const plan = planEncode(dataSet, options);
+    const emitter = new SinkEmitter(sink, options.chunkSize ?? DEFAULT_CHUNK_SIZE);
+    emitPlan(plan, emitter);
+    emitter.flush();
+    return plan.total;
 }
 
 function emitTokens(emitter: Emitter, tokens: EmitToken[]): void {
