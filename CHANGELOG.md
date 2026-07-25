@@ -19,6 +19,15 @@ from the `v2.0.0-rc.3` tag once the downstream soak passes.
 
 ### Added
 
+- Streaming and into-buffer write paths (#41): `encodedLength` sizes an
+  encoding without emitting it, `encodeDataSetInto` writes into a caller's
+  buffer at an offset, and `encodeDataSetTo` / `writeFileTo` stream to a sink
+  in `chunkSize` pieces — values larger than a chunk are handed over uncopied,
+  so peak buffering tracks the chunk size rather than the file. `writeFile`
+  now allocates the file once and encodes the dataset straight into it,
+  removing the assembly copy that made the modify path hold both. Deflated
+  output still materializes (the deflater needs the whole dataset) and is
+  documented as the one non-streaming path.
 - Nested and predicate edits in `modifyDataSet` (#42): `DataSetEdits.removeWhere`
   removes every element at any depth whose tag satisfies a predicate (so private
   groups and the `50xx`/`60xx` ranges are expressed by the caller's own rule,

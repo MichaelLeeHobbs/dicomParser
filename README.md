@@ -201,6 +201,25 @@ const edited = modifyDataSet(parsed.dataSet, {
 const anonymized = writeFile({ dataSet: edited });
 ```
 
+### Streaming writes
+
+`writeFileTo` emits a file in chunks, so a receiver never holds the whole
+object; `encodedLength` + `encodeDataSetInto` cover the assemble-into-my-buffer
+case.
+
+```ts
+import { createWriteStream } from 'node:fs';
+import { writeFileTo } from '@ubercode/dicom-parser';
+
+const out = createWriteStream('out.dcm');
+writeFileTo(chunk => out.write(chunk), { dataSet: edited, chunkSize: 64 * 1024 });
+out.end();
+```
+
+Values larger than a chunk (pixel fragments, big opaque values) are passed to
+the sink uncopied. The sink is synchronous, so backpressure is yours to apply;
+the deflated transfer syntax cannot stream (its payload arrives as one chunk).
+
 ### Lenient-mode options
 
 | Option                          | Purpose                                                                                          |
