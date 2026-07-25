@@ -201,20 +201,7 @@ class Tokenizer {
      * parsing resumes after it. Returns `false` when no fallback exists.
      */
     private recoverToFallback(cause: DicomError): boolean {
-        // Resource bounds are terminal — rolling back and retrying would just
-        // re-hit the limit (the count never decreases) or overflow the stack.
-        // Truncation is terminal too: falling back would let a speculative
-        // sequence swallow an end-of-input hit and misreport a strict-EOF parse
-        // of a prefix as complete.
-        if (cause.code === 'limit-exceeded' || cause.code === 'depth-exceeded' || cause.code === 'truncated') {
-            return false;
-        }
-        // Under strict EOF, any error carrying totalNeeded is truncation
-        // evidence regardless of its code (buffer-overread from a truncated
-        // header, an annotated malformed overrun) — equally terminal, or the
-        // fallback would swallow it and misreport a prefix as complete. In
-        // tolerant mode these stay recoverable (unchanged parse behavior).
-        if (this.stream.strictEof && cause.totalNeeded !== undefined) {
+        if (this.isTerminal(cause)) {
             return false;
         }
         let fallbackIndex = -1;
@@ -250,6 +237,24 @@ class Tokenizer {
             hadUndefinedLength: false,
         });
         return true;
+    }
+
+    /**
+     * Failures the speculative fallback must never recover. Resource bounds
+     * are terminal — rolling back and retrying would just re-hit the limit
+     * (the count never decreases) or overflow the stack. Truncation is
+     * terminal too: under strict EOF, any error carrying `totalNeeded` is
+     * truncation evidence regardless of its code (`truncated`, a
+     * buffer-overread from a truncated header, an annotated malformed
+     * overrun) — recovering would let a speculative sequence swallow an
+     * end-of-input hit and misreport a prefix as complete. In tolerant mode
+     * those stay recoverable (unchanged parse behavior).
+     */
+    private isTerminal(cause: DicomError): boolean {
+        if (cause.code === 'limit-exceeded' || cause.code === 'depth-exceeded' || cause.code === 'truncated') {
+            return true;
+        }
+        return this.stream.strictEof && cause.totalNeeded !== undefined;
     }
 
     /** Unwinds open frames after a failure so partial results survive. */
