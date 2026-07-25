@@ -46,6 +46,7 @@ export {
 export { readPart10Header, readUiString, type Part10Header, type Part10Options } from './part10';
 export { parseHeadAsync, type BulkRange, type HeadOptions, type HeadResult, type RangeReader } from './headRead';
 export { PushParser, type PushOptions, type PushOutcome, type PushStatus } from './pushParser';
+export { toDicomJson, type DicomJsonAttribute, type DicomJsonModel, type DicomJsonOptions, type DicomJsonPersonName } from './dicomJson';
 export { inflateRaw, inflateRawAsync, hasSyncInflate, type InflateFn } from './inflate';
 export {
     parse,
