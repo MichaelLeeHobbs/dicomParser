@@ -47,7 +47,12 @@ export interface ParseOptions {
     readonly transferSyntax?: string;
     /** VR source for implicit-VR elements. */
     readonly vrLookup?: VrLookup;
-    /** Stop condition with ≥ semantics (root-level elements only). */
+    /**
+     * Stop condition (root-level elements only): a single-tag ≥ threshold, or
+     * a resolved-tag set (`{ tags }`, #35) that stops once every listed tag is
+     * parsed or provably absent — bounding header extraction for objects with
+     * no high tag (SR, encapsulated PDF, RTSTRUCT).
+     */
     readonly stopAt?: StopAtOption;
     /** Maximum sequence nesting depth (default 128). */
     readonly maxDepth?: number;

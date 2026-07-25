@@ -11,6 +11,15 @@ from the `v2.0.0-rc.3` tag once the downstream soak passes.
 
 ### Added
 
+- `stopAt` resolved-tag sets (#35): `stopAt: { tags: [...] }` stops parsing at
+  the first root element proving every listed tag answered (parsed) or provably
+  absent (a greater root tag read; stream-ordered per PS3.5). Bounds header
+  extraction by construction for objects with no high tag — SR, encapsulated
+  PDF, RTSTRUCT — where a `(7FE0,0010)` threshold never fires. The single-tag
+  `{ tag, inclusive }` shape is unchanged (`StopAtOption` is now a union), and
+  group bounds remain `{ tag: tag(group + 1, 0x0000) }`. Works through `parse`,
+  `parsePartial`, and `PushParser`; `parseHeadAsync` keeps the single-tag shape
+  (it already skips bulk).
 - `PushParser`: a push/streaming parser for receive paths (#33). Feed chunks
   with `push(chunk)` and read incremental signals — root elements settle and
   emit exactly once (`onElement`), a `wanted` tag set resolves when each tag is

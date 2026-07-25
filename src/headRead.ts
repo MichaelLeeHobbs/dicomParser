@@ -26,7 +26,7 @@ import { readExplicitElementHeader, readImplicitElementHeader, type ElementHeade
 import { NATIVE_TRANSFER_SYNTAXES, parse, TS_DEFLATED_LE, TS_EXPLICIT_BE, TS_GE_PRIVATE_DLX, TS_IMPLICIT_LE } from './parse';
 import { readPart10Header } from './part10';
 import { TAG_ITEM, TAG_PIXEL_DATA, TAG_SEQUENCE_DELIMITATION, tagToString, toTag, UNDEFINED_LENGTH, type Tag } from './tag';
-import { readElements, type ReadElementsResult, type StopAtOption } from './tokenizer';
+import { readElements, type ReadElementsResult, type StopAtTagOption } from './tokenizer';
 
 /** Value representations whose defined-length value bytes are skippable bulk. */
 const BULK_VRS: ReadonlySet<string> = new Set(['OB', 'OW', 'OD', 'OF', 'OL', 'OV']);
@@ -80,8 +80,13 @@ export interface HeadOptions {
     readonly maxElements?: number;
     /** Transfer syntax for headerless (raw) datasets — no `DICM` prefix. */
     readonly transferSyntax?: string;
-    /** Stop condition with ≥ semantics (root-level elements only). */
-    readonly stopAt?: StopAtOption;
+    /**
+     * Stop condition with ≥ semantics (root-level elements only). The head
+     * read supports the single-tag threshold; resolved-tag sets (#35) apply to
+     * `parse`/`PushParser`, where whole-value walking is the cost to bound —
+     * the head read already skips bulk values.
+     */
+    readonly stopAt?: StopAtTagOption;
 }
 
 /** Result of {@link parseHeadAsync}: metadata plus the skipped bulk ranges. */
