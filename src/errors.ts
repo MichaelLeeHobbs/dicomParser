@@ -26,7 +26,13 @@ export type DicomErrorCode =
     /** Sequence nesting exceeded the configured depth bound. */
     | 'depth-exceeded'
     /** The parse exceeded a configured resource bound (e.g. total element count). */
-    | 'limit-exceeded';
+    | 'limit-exceeded'
+    /**
+     * The input ended mid-structure where a longer input could have continued
+     * (strict-EOF mode only — `parse` tolerates these cases with a warning).
+     * Always carries {@link DicomError.totalNeeded}.
+     */
+    | 'truncated';
 
 /**
  * Cross-realm brand for {@link isDicomError}. A `Symbol.for` key is shared across
@@ -46,14 +52,23 @@ export class DicomError extends Error {
     readonly code: DicomErrorCode;
     /** Byte offset where the failure was detected, when known. */
     readonly offset: number | undefined;
+    /**
+     * When set, the failure is truncation evidence: the smallest total input
+     * length that could let parsing advance past the failure point. Derived
+     * from untrusted declared lengths — callers must cap it before allocating
+     * or fetching. `parsePartial` classifies any error carrying this field as
+     * `needMoreBytes`.
+     */
+    readonly totalNeeded: number | undefined;
     /** Cross-realm brand; see {@link isDicomError}. */
     readonly [DICOM_ERROR_BRAND] = true;
 
-    constructor(code: DicomErrorCode, message: string, options?: { readonly offset?: number; readonly cause?: unknown }) {
+    constructor(code: DicomErrorCode, message: string, options?: { readonly offset?: number; readonly cause?: unknown; readonly totalNeeded?: number }) {
         super(message, options?.cause === undefined ? undefined : { cause: options.cause });
         this.name = 'DicomError';
         this.code = code;
         this.offset = options?.offset;
+        this.totalNeeded = options?.totalNeeded;
     }
 }
 

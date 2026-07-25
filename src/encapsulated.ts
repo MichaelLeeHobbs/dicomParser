@@ -16,7 +16,19 @@ import { DicomError } from './errors';
 import type { ElementHeader } from './elementHeader';
 import { TAG_ITEM, TAG_ITEM_DELIMITATION, TAG_SEQUENCE_DELIMITATION, UNDEFINED_LENGTH, tagToString } from './tag';
 
-function readBasicOffsetTable(stream: ByteStream, end: number): number[] {
+/**
+ * Bounds context for a pixel-data scan. `truncationAtBound` is `true` only when
+ * the bound is the physical end of input for an undefined-length value under
+ * strict EOF — running out there is truncation evidence, whereas running out at
+ * a declared (interior) bound is corruption and stays tolerated.
+ */
+interface PixelScanContext {
+    readonly bound: number;
+    readonly truncationAtBound: boolean;
+}
+
+function readBasicOffsetTable(stream: ByteStream, ctx: PixelScanContext): number[] {
+    const end = ctx.bound;
     const itemTag = stream.readTag();
     if (itemTag !== TAG_ITEM) {
         throw new DicomError('malformed', `encapsulated pixel data: basic offset table item (FFFE,E000) not found at offset ${stream.position - 4}`, {
@@ -33,6 +45,7 @@ function readBasicOffsetTable(stream: ByteStream, end: number): number[] {
     if (itemLength > end - stream.position) {
         throw new DicomError('buffer-overread', `encapsulated pixel data: basic offset table length ${itemLength} exceeds the value bound`, {
             offset: stream.position - 4,
+            ...(ctx.truncationAtBound ? { totalNeeded: stream.position + itemLength } : {}),
         });
     }
     const entryCount = Math.floor(itemLength / 4);
@@ -52,15 +65,21 @@ function readBasicOffsetTable(stream: ByteStream, end: number): number[] {
     return basicOffsetTable;
 }
 
-function readFragmentLength(stream: ByteStream, header: ElementHeader, end: number): number {
+function readFragmentLength(stream: ByteStream, header: ElementHeader, ctx: PixelScanContext): number {
     const length = stream.readUint32();
     if (length === UNDEFINED_LENGTH) {
         throw new DicomError('malformed', `encapsulated pixel data ${tagToString(header.tag)}: fragment with undefined length`, {
             offset: stream.position - 4,
         });
     }
-    const available = end - stream.position;
+    const available = ctx.bound - stream.position;
     if (length > available) {
+        if (ctx.truncationAtBound) {
+            throw new DicomError('truncated', `encapsulated pixel data ${tagToString(header.tag)}: fragment length ${length} overruns end of data`, {
+                offset: stream.position - 8,
+                totalNeeded: stream.position + length,
+            });
+        }
         stream.warnings.push({
             code: 'length-adjusted',
             message: `fragment length ${length} exceeds remaining bytes; clamped to ${available}`,
@@ -93,9 +112,14 @@ function readFragmentLength(stream: ByteStream, header: ElementHeader, end: numb
  */
 export function scanEncapsulatedPixelData(stream: ByteStream, header: ElementHeader, end?: number, frameBound?: number): EncapsulatedElement {
     const bound = end ?? frameBound ?? stream.length;
-    const basicOffsetTable = readBasicOffsetTable(stream, bound);
+    // An undefined-length value bounded by the physical end of input can run out
+    // because the input is a prefix; a defined-length value (or an interior
+    // frame bound) has a complete declared extent, so running out there is
+    // corruption regardless of how many more bytes arrive.
+    const ctx: PixelScanContext = { bound, truncationAtBound: stream.strictEof && end === undefined && bound === stream.length };
+    const basicOffsetTable = readBasicOffsetTable(stream, ctx);
     const fragments: Fragment[] = [];
-    const scan = scanFragments(stream, header, fragments, bound);
+    const scan = scanFragments(stream, header, fragments, ctx);
     let { contentEnd, endOffset } = scan;
     // Undefined-length pixel data that reached its bound without a delimiter is
     // genuinely missing FFFE,E0DD (defined-length has an exact extent instead).
@@ -162,7 +186,8 @@ function delimiterTermination(stream: ByteStream, header: ElementHeader, itemTag
 
 /** Scans fragment items up to `bound`. `missingDelimiter` marks that it ran out
  * to the bound without a closing FFFE,E0DD (or a terminal fragment). */
-function scanFragments(stream: ByteStream, header: ElementHeader, fragments: Fragment[], bound: number): ScanResult {
+function scanFragments(stream: ByteStream, header: ElementHeader, fragments: Fragment[], ctx: PixelScanContext): ScanResult {
+    const { bound } = ctx;
     const baseOffset = stream.position;
     while (bound - stream.position >= 8) {
         const itemStart = stream.position;
@@ -171,7 +196,7 @@ function scanFragments(stream: ByteStream, header: ElementHeader, fragments: Fra
         if (terminated !== undefined) {
             return terminated;
         }
-        const length = readFragmentLength(stream, header, bound);
+        const length = readFragmentLength(stream, header, ctx);
         fragments.push({ offset: itemStart - baseOffset, position: stream.position, length });
         stream.seek(length);
         if (itemTag !== TAG_ITEM) {
@@ -182,6 +207,14 @@ function scanFragments(stream: ByteStream, header: ElementHeader, fragments: Fra
             });
             return { contentEnd: stream.position, endOffset: stream.position, missingDelimiter: false };
         }
+    }
+    if (ctx.truncationAtBound) {
+        // thrown before the slack seek, so totalNeeded is sized from the exact
+        // position where the next item header (or delimiter) would start
+        throw new DicomError('truncated', `pixel data element ${tagToString(header.tag)} missing sequence delimiter (FFFE,E0DD)`, {
+            offset: stream.position,
+            totalNeeded: stream.position + 8,
+        });
     }
     stream.seek(bound - stream.position);
     return { contentEnd: stream.position, endOffset: stream.position, missingDelimiter: true };

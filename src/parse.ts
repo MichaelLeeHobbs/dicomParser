@@ -1,10 +1,12 @@
 /**
- * Parse entry points: `parse` (sync) and `parseAsync` (adds the
- * `DecompressionStream` inflate path for browsers).
+ * Parse entry points: `parse` (sync), `parseAsync` (adds the
+ * `DecompressionStream` inflate path for browsers), and `parsePartial` /
+ * `parsePartialAsync` (strict-EOF classification of a byte prefix into
+ * `complete` / `needMoreBytes` / `malformed` — issue #34).
  *
- * Both return a {@link ParseResult} instead of throwing on malformed input:
- * the partially-parsed dataset and meta group are always available alongside
- * the typed error (upstream #46/#203/#277).
+ * All return results instead of throwing on malformed input: the
+ * partially-parsed dataset and meta group are always available alongside the
+ * typed error (upstream #46/#203/#277).
  *
  * @module parse
  */
@@ -96,6 +98,41 @@ export interface ParseResult {
     readonly stoppedAt: Tag | undefined;
 }
 
+/** Where a truncated parse stopped, and how much more input could let it advance. */
+export interface TruncationInfo {
+    /** Byte offset where parsing stopped (the start of the truncated structure, when known). */
+    readonly offset: number;
+    /**
+     * Smallest total input length that could let parsing advance past the
+     * point it stopped at — sized from the declared length when one exists, or
+     * the next 8-byte structure header otherwise. Monotonic: re-calling
+     * {@link parsePartial} with at least this many bytes always makes
+     * progress. Derived from **untrusted** declared lengths: cap it against a
+     * policy limit before allocating or fetching.
+     */
+    readonly totalNeeded: number;
+}
+
+/**
+ * Result of {@link parsePartial}: a discriminated truncation outcome.
+ *
+ * - `complete` — the input parses as a whole object. Note a prefix cut exactly
+ *   at a root element boundary is indistinguishable from a complete file (the
+ *   dataset carries no overall length); pair with an expected total size when
+ *   one is known.
+ * - `needMoreBytes` — the input ends mid-structure: definite truncation
+ *   evidence, with {@link TruncationInfo} sizing the follow-up read. If the
+ *   input is already at its final size, treat this as truncated storage (i.e.
+ *   malformed in practice).
+ * - `malformed` — more bytes cannot help; `result.error` has the failure
+ *   (structural corruption, resource bounds, unsupported syntax, or a missing
+ *   inflater).
+ */
+export type PartialParseResult =
+    | { readonly outcome: 'complete'; readonly result: ParseResult }
+    | { readonly outcome: 'needMoreBytes'; readonly result: ParseResult; readonly truncation: TruncationInfo }
+    | { readonly outcome: 'malformed'; readonly result: ParseResult };
+
 interface Plan {
     readonly header: Part10Header;
     readonly transferSyntax: string;
@@ -126,8 +163,8 @@ function failed(header: Part10Header, bytes: Uint8Array, transferSyntax: string,
 }
 
 /** Reads the header and decides VR mode, endianness and deflate handling. */
-function planParse(bytes: Uint8Array, options: ParseOptions): Plan {
-    const header = readPart10Header(bytes, options);
+function planParse(bytes: Uint8Array, options: ParseOptions, strictEof: boolean): Plan {
+    const header = readPart10Header(bytes, strictEof ? { ...options, strictEof } : options);
     const transferSyntax = header.transferSyntax ?? '';
     let error = header.error;
     if (error === undefined && transferSyntax === TS_GE_PRIVATE_DLX) {
@@ -283,9 +320,9 @@ function assignCharsets(root: DicomDataSet, options: ParseOptions, warnings: Par
     }
 }
 
-function parseDataSet(plan: Plan, bytes: Uint8Array, options: ParseOptions): ParseResult {
+function parseDataSet(plan: Plan, bytes: Uint8Array, options: ParseOptions, strictEof: boolean): ParseResult {
     const warnings = [...plan.header.warnings];
-    const stream = new ByteStream(bytes, { position: plan.header.dataSetPosition, littleEndian: plan.littleEndian, warnings });
+    const stream = new ByteStream(bytes, { position: plan.header.dataSetPosition, littleEndian: plan.littleEndian, warnings, strictEof });
     const result = readElements(stream, {
         explicitVr: plan.explicitVr,
         compressedTransferSyntax: plan.compressed,
@@ -321,7 +358,11 @@ function parseDataSet(plan: Plan, bytes: Uint8Array, options: ParseOptions): Par
  * @throws DicomError `invalid-argument` when `bytes` is not a Uint8Array
  */
 export function parse(bytes: Uint8Array, options: ParseOptions = {}): ParseResult {
-    const plan = planParse(bytes, options);
+    return runParse(bytes, options, false);
+}
+
+function runParse(bytes: Uint8Array, options: ParseOptions, strictEof: boolean): ParseResult {
+    const plan = planParse(bytes, options, strictEof);
     if (plan.error !== undefined) {
         return failed(plan.header, bytes, plan.transferSyntax, plan.error);
     }
@@ -340,7 +381,7 @@ export function parse(bytes: Uint8Array, options: ParseOptions = {}): ParseResul
             return failed(plan.header, bytes, plan.transferSyntax, thrown);
         }
     }
-    return parseDataSet(plan, dataBytes, options);
+    return parseDataSet(plan, dataBytes, options, strictEof);
 }
 
 /**
@@ -353,7 +394,11 @@ export function parse(bytes: Uint8Array, options: ParseOptions = {}): ParseResul
  * @throws DicomError `invalid-argument` when `bytes` is not a Uint8Array
  */
 export async function parseAsync(bytes: Uint8Array, options: ParseOptions = {}): Promise<ParseResult> {
-    const plan = planParse(bytes, options);
+    return runParseAsync(bytes, options, false);
+}
+
+async function runParseAsync(bytes: Uint8Array, options: ParseOptions, strictEof: boolean): Promise<ParseResult> {
+    const plan = planParse(bytes, options, strictEof);
     if (plan.error !== undefined) {
         return failed(plan.header, bytes, plan.transferSyntax, plan.error);
     }
@@ -372,5 +417,67 @@ export async function parseAsync(bytes: Uint8Array, options: ParseOptions = {}):
             return failed(plan.header, bytes, plan.transferSyntax, thrown);
         }
     }
-    return parseDataSet(plan, dataBytes, options);
+    return parseDataSet(plan, dataBytes, options, strictEof);
+}
+
+/** End of the Part-10 prefix: 128-byte preamble plus the 4-byte `DICM` marker. */
+const PART10_PREFIX_END = 132;
+
+/** Classifies a strict-EOF parse run into the discriminated truncation outcome. */
+function classifyPartial(result: ParseResult): PartialParseResult {
+    const error = result.error;
+    if (error === undefined) {
+        return { outcome: 'complete', result };
+    }
+    if (error.totalNeeded !== undefined) {
+        return { outcome: 'needMoreBytes', result, truncation: { offset: error.offset ?? result.bytes.length, totalNeeded: error.totalNeeded } };
+    }
+    if (error.code === 'not-dicom' && result.bytes.length < PART10_PREFIX_END) {
+        // too short to contain the DICM marker: could still become Part-10
+        return { outcome: 'needMoreBytes', result, truncation: { offset: result.bytes.length, totalNeeded: PART10_PREFIX_END } };
+    }
+    return { outcome: 'malformed', result };
+}
+
+/**
+ * Parses a byte prefix and classifies the outcome: `complete`,
+ * `needMoreBytes` (definite truncation, with a sized follow-up hint), or
+ * `malformed` (more bytes cannot help) — so callers receiving an object
+ * incrementally can distinguish "keep reading" from "give up", and size the
+ * next read instead of guessing (issue #34).
+ *
+ * Differences from {@link parse}: end-of-input tolerance is disabled — a
+ * truncated defined-length value, a missing delimiter at end of data, or a
+ * structure overrunning end of data all classify as `needMoreBytes` instead
+ * of clamping with a warning (or failing as `malformed`). Interior anomalies
+ * (bounded by a declared length that lies within the input) are tolerated
+ * exactly as `parse` tolerates them.
+ *
+ * The partial {@link ParseResult} is always available on every arm. For
+ * deflated transfer syntaxes, truncation of the deflate payload itself is not
+ * distinguishable and surfaces as `malformed`; offsets refer to
+ * `result.bytes` (the spliced buffer). Combine with `options.stopAt` for a
+ * bounded "everything before PixelData is available" check.
+ *
+ * @param bytes - The available prefix of the object (may be the whole file)
+ * @param options - Parse options (same as {@link parse})
+ * @returns The classified outcome; never throws for malformed input
+ * @throws DicomError `invalid-argument` when `bytes` is not a Uint8Array
+ */
+export function parsePartial(bytes: Uint8Array, options: ParseOptions = {}): PartialParseResult {
+    return classifyPartial(runParse(bytes, options, true));
+}
+
+/**
+ * Like {@link parsePartial}, adding the `DecompressionStream('deflate-raw')`
+ * inflate path so deflated files classify in browsers without an injected
+ * inflater.
+ *
+ * @param bytes - The available prefix of the object (may be the whole file)
+ * @param options - Parse options (same as {@link parse})
+ * @returns The classified outcome; never rejects for malformed input
+ * @throws DicomError `invalid-argument` when `bytes` is not a Uint8Array
+ */
+export async function parsePartialAsync(bytes: Uint8Array, options: ParseOptions = {}): Promise<PartialParseResult> {
+    return classifyPartial(await runParseAsync(bytes, options, true));
 }

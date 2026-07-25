@@ -20,6 +20,14 @@ export interface ByteStreamOptions {
     readonly position?: number;
     /** A shared warnings sink; a new array is created when omitted. */
     readonly warnings?: ParseWarning[];
+    /**
+     * Strict end-of-input mode (default `false`), set by `parsePartial`: parse
+     * paths that normally tolerate a truncated input with a warning (value
+     * clamps, missing delimiters at end of data) instead fail with a typed
+     * `truncated` error carrying `totalNeeded`, so truncation is
+     * distinguishable from corruption.
+     */
+    readonly strictEof?: boolean;
 }
 
 /**
@@ -32,6 +40,8 @@ export class ByteStream {
     readonly littleEndian: boolean;
     /** Warnings recorded while parsing (shared with the owning parse). */
     readonly warnings: ParseWarning[];
+    /** `true` when EOF-tolerant parse paths must fail as `truncated` instead of warning. */
+    readonly strictEof: boolean;
     /** Current read position. */
     position: number;
 
@@ -56,6 +66,7 @@ export class ByteStream {
         this.littleEndian = options.littleEndian ?? true;
         this.position = position;
         this.warnings = options.warnings ?? [];
+        this.strictEof = options.strictEof ?? false;
     }
 
     /** Total size of the underlying byte array. */
@@ -77,7 +88,12 @@ export class ByteStream {
     seek(offset: number): void {
         const next = this.position + offset;
         if (next < 0 || next > this.bytes.length) {
-            throw new DicomError('buffer-overread', `ByteStream.seek: position ${next} is outside [0, ${this.bytes.length}]`, { offset: this.position });
+            // a forward overrun is truncation evidence (`totalNeeded`); a negative
+            // target is a logic error, never fixable by a longer input
+            throw new DicomError('buffer-overread', `ByteStream.seek: position ${next} is outside [0, ${this.bytes.length}]`, {
+                offset: this.position,
+                ...(next > this.bytes.length ? { totalNeeded: next } : {}),
+            });
         }
         this.position = next;
     }
@@ -86,6 +102,7 @@ export class ByteStream {
         if (this.position + size > this.bytes.length) {
             throw new DicomError('buffer-overread', `ByteStream: attempt to read ${size} bytes past end of buffer at position ${this.position}`, {
                 offset: this.position,
+                totalNeeded: this.position + size,
             });
         }
         const at = this.position;

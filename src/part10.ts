@@ -32,6 +32,13 @@ export interface Part10Options {
     readonly maxElements?: number;
     /** Nesting-depth cap applied while parsing the file meta group (review §3). */
     readonly maxDepth?: number;
+    /**
+     * Strict end-of-input mode (set by `parsePartial`): meta-group truncation
+     * fails with a typed `truncated` error carrying `totalNeeded` instead of
+     * the tolerant clamp-then-`malformed` path, so a truncated prefix is
+     * distinguishable from a corrupt file.
+     */
+    readonly strictEof?: boolean;
 }
 
 /** Result of {@link readPart10Header}: always populated, even on failure. */
@@ -107,9 +114,20 @@ export function readPart10Header(bytes: Uint8Array, options: Part10Options = {})
     return readMetaGroup(bytes, metaPosition, warnings, options);
 }
 
+/**
+ * Strict-EOF only: the input ran out before the first dataset tag was seen, so
+ * the meta group may continue — truncation, not a missing-element failure.
+ */
+function metaTruncation(stream: ByteStream, stoppedAt: number | undefined, options: Part10Options): DicomError | undefined {
+    if (options.strictEof !== true || stoppedAt !== undefined || stream.position < stream.length) {
+        return undefined;
+    }
+    return new DicomError('truncated', 'input ends inside the file meta group', { offset: stream.position, totalNeeded: stream.length + 8 });
+}
+
 /** Parses group-0002 elements (explicit LE) up to the first non-meta tag. */
 function readMetaGroup(bytes: Uint8Array, metaPosition: number, warnings: ParseWarning[], options: Part10Options): Part10Header {
-    const stream = new ByteStream(bytes, { position: metaPosition, warnings });
+    const stream = new ByteStream(bytes, { position: metaPosition, warnings, ...(options.strictEof === undefined ? {} : { strictEof: options.strictEof }) });
     const result = readElements(stream, {
         explicitVr: true,
         stopAt: { tag: tag(0x0003, 0x0000), inclusive: false },
@@ -128,6 +146,7 @@ function readMetaGroup(bytes: Uint8Array, metaPosition: number, warnings: ParseW
         // syntax UID — treat meta truncation as a hard error.
         error = new DicomError('malformed', 'file meta group is truncated', { offset: metaPosition });
     }
+    error ??= metaTruncation(stream, result.stoppedAt, options);
     if (tsElement !== undefined && tsElement.kind === 'value') {
         transferSyntax = readUiString(bytes, tsElement.dataOffset, tsElement.length);
     } else if (error === undefined) {
