@@ -260,6 +260,26 @@ const edited = writeFile({
 `serializeParsed(parsed)` re-encodes a parsed file; for conformant little-endian files the
 output is byte-identical to the input (verified across the test corpus in CI).
 
+### The writer is little-endian only — by design
+
+`parse` reads **Explicit VR Big Endian** (`1.2.840.10008.1.2.2`); the writer never emits it,
+and that is settled rather than pending:
+
+- The syntax is **retired**. DICOM expects legacy objects to be transcoded to a current
+  syntax, so emitting _new_ big-endian objects would propagate an encoding the standard is
+  retiring.
+- Requesting it fails loudly: `writeFile({ transferSyntax: '1.2.840.10008.1.2.2' })` throws
+  `unsupported`, and `serializeParsed` refuses a big-endian parse for the same reason.
+- **Big-endian input is still fully supported.** Parsing one and writing it back transcodes
+  the values to little-endian automatically, so `parse → modifyDataSet → writeFile` on a
+  legacy study produces a correct, conformant little-endian file.
+
+Adversarial big-endian _fixtures_ need no writer support — `tests/helpers/p10.ts` builds them
+directly (`explicitEl(tag, vr, value, bigEndian)` and friends).
+
+Declined in [#83](https://github.com/MichaelLeeHobbs/dicomParser/issues/83); please do not
+re-open the question without a concrete consumer requirement.
+
 ## Migrating from `dicom-parser` 1.x
 
 The `compat` export is the v1 API:
