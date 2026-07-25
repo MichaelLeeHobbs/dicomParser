@@ -58,6 +58,11 @@ describe('toDicomJson — per-VR value semantics (PS3.18 Annex F)', () => {
         expect(model['00081160']).toEqual({ vr: 'IS' });
     });
 
+    it('emits an empty binary attribute as { vr } only — no empty InlineBinary', () => {
+        const f = p10(TS.explicitLE, [explicitEl('00420011', 'OB', new Uint8Array(0))]);
+        expect(toDicomJson(parse(f).dataSet)['00420011']).toEqual({ vr: 'OB' });
+    });
+
     it('reads binary numeric VRs with multiplicity', () => {
         expect(model['00280010']).toEqual({ vr: 'US', Value: [512, 513] });
     });
