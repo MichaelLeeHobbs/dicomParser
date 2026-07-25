@@ -111,6 +111,10 @@ export const TAG_ITEM_DELIMITATION: Tag = 0xfffee00d;
 export const TAG_SEQUENCE_DELIMITATION: Tag = 0xfffee0dd;
 /** Pixel Data tag (7FE0,0010). */
 export const TAG_PIXEL_DATA: Tag = 0x7fe00010;
+/** Extended Offset Table tag (7FE0,0001) — per-frame byte offsets, OV (PS3.5 A.4). */
+export const TAG_EXTENDED_OFFSET_TABLE: Tag = 0x7fe00001;
+/** Extended Offset Table Lengths tag (7FE0,0002) — per-frame byte lengths, OV. */
+export const TAG_EXTENDED_OFFSET_TABLE_LENGTHS: Tag = 0x7fe00002;
 /** Transfer Syntax UID tag (0002,0010). */
 export const TAG_TRANSFER_SYNTAX_UID: Tag = 0x00020010;
 /** Specific Character Set tag (0008,0005). */

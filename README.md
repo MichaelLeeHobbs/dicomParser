@@ -99,6 +99,25 @@ head.bulk.get(0x7fe00010); // { offset, length, vr, encapsulated } — fetch the
 head.bytesRead; // ≪ file size (≈98% less on pixel-data-dominant files)
 ```
 
+### Frame retrieval without reading the pixels
+
+`readFrameIndexAsync` resolves the pixel-data extent and per-frame file-absolute
+ranges from the header and offset tables — including the Extended Offset Table
+`(7FE0,0001)` — so a DICOMweb `/frames/{n}` handler is two ranged reads.
+
+```ts
+import { framePayload, readFrameIndexAsync } from '@ubercode/dicom-parser';
+
+const index = await readFrameIndexAsync({ read: readRange, size: fileSize });
+if (index.kind !== 'unavailable') {
+    const frame = index.frames[n]; // { offset, length } — file-absolute
+    const bytes = await readRange(frame.offset, frame.length);
+    const bitstream = index.kind === 'encapsulated' ? framePayload(bytes) : bytes;
+}
+// 'unavailable' carries a reason (e.g. indeterminate fragment boundaries) —
+// never a guessed offset.
+```
+
 ### Incremental ingest (is this buffer complete?)
 
 `parsePartial` classifies a byte prefix — `complete`, `needMoreBytes` (definite

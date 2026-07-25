@@ -19,6 +19,18 @@ from the `v2.0.0-rc.3` tag once the downstream soak passes.
 
 ### Added
 
+- `readFrameIndexAsync` (#38): resolves the PixelData extent and per-frame
+  file-absolute `(offset, length)` ranges over a `RangeReader`, reading only the
+  header, the offset tables and (as a last resort) fragment item headers — never
+  the pixel payload — so a frame can be served with a couple of ranged reads.
+  Adds **Extended Offset Table** `(7FE0,0001)`/`(7FE0,0002)` support (PS3.5 A.4,
+  previously unsupported), falling back to the basic offset table, a single-frame
+  span, or a fragment walk matched 1:1 against `NumberOfFrames`; native syntaxes
+  compute frames from Rows/Columns/SamplesPerPixel/BitsAllocated. Indeterminate
+  cases return `kind: 'unavailable'` with a reason rather than a guess. The pure
+  `frameFragments` / `framePayload` helpers turn a fetched frame range into
+  codec-ready bytes at no extra IO. Exports `TAG_EXTENDED_OFFSET_TABLE` and
+  `TAG_EXTENDED_OFFSET_TABLE_LENGTHS`.
 - `DicomDataSet.rawBytesCopy` (#40): the explicit detach operation — a fresh
   allocation of an element's value bytes that does not retain the parsed
   buffer. `rawBytes`'s view-retention semantics are now documented explicitly
