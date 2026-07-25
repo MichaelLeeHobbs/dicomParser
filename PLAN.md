@@ -27,10 +27,9 @@ behavior map, preserve-vs-fix list, assets to port from dcmtk.js, toolchain gotc
 | 7 — Upstream v2.0 offer (optional) | **DRAFTED** (decision pending)  | docs/upstream-offer-draft.md holds the proposed #214 comment; posting is the user's call.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | 2.1 — Field-review roadmap         | **IN PROGRESS**                 | `master` is the 2.1 line (`2.1.0-alpha.0`) while the 2.0 rc soaks downstream; 2.0.0 final cuts from the `v2.0.0-rc.3` tag. Order: P0s #34 (typed `needMoreBytes` truncation outcome — `parsePartial`, landed) → #33 (push parser `PushParser`, landed; incremental-inflate signals for deflated input deferred) → #35 (resolved-tag-set stops, landed — all three P0s done), then P1s #36 (`/dictionary` subpath, landed) → #37 (`toDicomJson`, landed; JSON→dataset direction deferred), #38, #39 (FMI knobs, landed), #40 (rawBytesCopy + view docs, landed), #56 (PN ^/= charset resets, landed) — P1s complete except #38. P2s #41-#43 and test infra #44/#45 triaged later. **Do not publish a `2.1.0-rc.*` until 2.0.0 final ships** — publish.yml derives the dist-tag from the version suffix, so it would repoint the `rc` tag the soak consumes. |
 
-Outstanding manual step: configure npm Trusted Publishing for this repo + `publish.yml` on
-npmjs.com (possible now that the package exists). Until then, tag-push publishes will fail at
-the `npm publish` step. Known cosmetic issue: npm forced `latest` → `2.0.0-alpha.0` on first
-publish (unavoidable; self-corrects at `2.0.0` final).
+npm Trusted Publishing is configured and live (rc.1–rc.3 published via OIDC with provenance).
+Known cosmetic issue: npm forced `latest` → `2.0.0-alpha.0` on first publish (unavoidable;
+self-corrects at `2.0.0` final — never repoint `latest` at an rc).
 
 **Adversarial review (2026-07-23)**: a five-reviewer adversarial pass found and fixed a set of
 real bugs before rc.1 — writer length-field corruption (PR #14), tokenizer silent data-loss on

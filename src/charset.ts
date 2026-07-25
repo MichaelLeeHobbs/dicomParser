@@ -319,10 +319,12 @@ function isMultiByteG0(decoder: SegmentDecoder): boolean {
  * decoder into the G0 or G1 register; data bytes are then routed by their range
  * (GL→G0, GR→G1). Unrecognized escapes leave both registers unchanged.
  *
- * At a value/line delimiter the designations reset to the initial state — unless
- * a multi-byte G0 set is active, where GL bytes are character bytes (PS3.5
- * C.12.1.1.2; matches DCMTK's `checkDelimiters`). This resets a leaked single-byte
- * G1 designation across a non-conformant delimiter that omitted the reset escape.
+ * At a delimiter in `resets` — the value/line delimiters, plus `^`/`=` when the
+ * caller passes the PN set (#56) — the designations reset to the initial state,
+ * unless a multi-byte G0 set is active, where GL bytes are character bytes
+ * (PS3.5 C.12.1.1.2; matches DCMTK's `checkDelimiters`). This resets a leaked
+ * single-byte G1 designation across a non-conformant delimiter that omitted the
+ * reset escape.
  */
 function decodeIso2022(bytes: Uint8Array, initialG0: SegmentDecoder, initialG1: SegmentDecoder | undefined, resets: ReadonlySet<number>): string {
     let out = '';
