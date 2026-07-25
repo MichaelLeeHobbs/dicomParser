@@ -230,7 +230,8 @@ describe('writeFile', () => {
             implementationClassUid: '1.2.826.0.1.999999',
             implementationVersionName: 'MYAPP_1_0',
             sourceApplicationEntityTitle: 'STORESCP',
-            extraElements: [element('00020017', 'AE', 'SENDER'), element('00020018', 'AE', 'RECEIVER')],
+            // deliberately out of order: the builder must sort ascending
+            extraElements: [element('00020018', 'AE', 'RECEIVER'), element('00020017', 'AE', 'SENDER')],
         });
         const result = parse(meta, { transferSyntax: TS_EXPLICIT_LE });
         expect(result.ok).toBe(true);
