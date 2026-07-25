@@ -1,23 +1,72 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { deflateRawSync } from 'node:zlib';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from '../src/parse';
 import { DEFAULT_MAX_INFLATED_BYTES } from '../src/inflate';
 import { TS, concat, encapsulatedPixelData, explicitEl, implicitEl, latin1, metaGroup, p10, p10Deflated, sqExplicit, sqExplicitUndefined } from './helpers/p10';
+import { collectTestImages } from './helpers/corpus';
+import { loadFuzzCorpus, recordCounterexample, runs } from './helpers/fuzz';
 
 // Fuzz posture (PLAN.md backlog item 12, upstream #282): the parser must never
 // throw, hang, or crash on malformed input — failures must surface as the
 // typed error in the result. Targets the attack surface called out in
 // SECURITY.md: length fields, offsets, delimiters, truncation, deflate.
+//
+// Every iteration count goes through runs(), which multiplies by FUZZ_SCALE
+// (#45): PR runs keep the fast default, the nightly job sets it high. Inputs
+// that ever tripped the parser live in tests/fuzz-corpus/ and are replayed
+// first, so a fixed crash cannot silently come back.
 
 /** parse() must return (never throw) and be reasonably fast for small inputs. */
-function assertTotal(bytes: Uint8Array): void {
-    const result = parse(bytes);
-    expect(result.warnings).toBeDefined();
-    expect(result.dataSet).toBeDefined();
+function assertTotal(bytes: Uint8Array, label = 'fuzz'): void {
+    try {
+        const result = parse(bytes);
+        expect(result.warnings).toBeDefined();
+        expect(result.dataSet).toBeDefined();
+    } catch (thrown) {
+        // hand the failing bytes to the nightly job's artifact upload, so a new
+        // counterexample arrives as a file to commit rather than a seed to re-derive
+        recordCounterexample(label, bytes);
+        throw thrown;
+    }
 }
+
+describe('fuzz: crash-regression corpus', () => {
+    const seeds = loadFuzzCorpus();
+
+    it('names counterexample artifacts after the case, without doubling the extension', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'fuzz-artifact-'));
+        const previous = process.env.FUZZ_ARTIFACT_DIR;
+        process.env.FUZZ_ARTIFACT_DIR = dir;
+        try {
+            recordCounterexample('empty.bin', Uint8Array.from([1, 2]));
+            recordCounterexample('truncated-meta-group.bin@42', Uint8Array.from([3]));
+            expect(readdirSync(dir).sort()).toEqual(['empty.bin', 'truncated-meta-group.bin_42.bin']);
+        } finally {
+            if (previous === undefined) delete process.env.FUZZ_ARTIFACT_DIR;
+            else process.env.FUZZ_ARTIFACT_DIR = previous;
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('replays every persisted seed without throwing', () => {
+        expect(seeds.length).toBeGreaterThan(0);
+        for (const seed of seeds) {
+            assertTotal(seed.bytes, seed.name);
+        }
+    });
+
+    it('replays every truncation of every persisted seed', () => {
+        for (const seed of seeds) {
+            for (let end = 0; end <= seed.bytes.length; end++) {
+                assertTotal(seed.bytes.subarray(0, end), `${seed.name}@${end}`);
+            }
+        }
+    });
+});
 
 const SMALL_BYTES = fc.uint8Array({ minLength: 0, maxLength: 2048 });
 
@@ -27,7 +76,7 @@ describe('fuzz: arbitrary bytes', () => {
             fc.property(SMALL_BYTES, bytes => {
                 assertTotal(bytes);
             }),
-            { numRuns: 300 }
+            { numRuns: runs(300) }
         );
     });
 
@@ -37,7 +86,7 @@ describe('fuzz: arbitrary bytes', () => {
                 const result = parse(bytes, { transferSyntax });
                 expect(result.dataSet).toBeDefined();
             }),
-            { numRuns: 300 }
+            { numRuns: runs(300) }
         );
     });
 });
@@ -65,7 +114,7 @@ describe('fuzz: corpus mutation', () => {
                 mutated[offset] = value;
                 assertTotal(mutated);
             }),
-            { numRuns: 500 }
+            { numRuns: runs(500) }
         );
     });
 
@@ -76,7 +125,7 @@ describe('fuzz: corpus mutation', () => {
                 new DataView(mutated.buffer).setUint32(offset, value, true);
                 assertTotal(mutated);
             }),
-            { numRuns: 500 }
+            { numRuns: runs(500) }
         );
     });
 
@@ -87,6 +136,21 @@ describe('fuzz: corpus mutation', () => {
         }
     });
 
+    it('mutated slices of the whole fixture corpus never crash the parser', () => {
+        const corpus = collectTestImages();
+        expect(corpus.length).toBeGreaterThan(0);
+        const files = corpus.map(path => new Uint8Array(readFileSync(path)));
+        fc.assert(
+            fc.property(fc.nat(files.length - 1), fc.nat(), fc.integer({ min: 0, max: 255 }), fc.nat(), (fileIndex, offset, value, end) => {
+                const file = files[fileIndex] as Uint8Array;
+                const mutated = Uint8Array.from(file);
+                mutated[offset % file.length] = value;
+                assertTotal(mutated.subarray(0, end % (file.length + 1)));
+            }),
+            { numRuns: runs(200) }
+        );
+    });
+
     it('mutated real-file slices never crash the parser', () => {
         const real = new Uint8Array(readFileSync(join(__dirname, '..', 'testImages', 'deflate', 'report_dfl')));
         fc.assert(
@@ -95,7 +159,7 @@ describe('fuzz: corpus mutation', () => {
                 mutated[offset] = value;
                 assertTotal(mutated.subarray(0, end));
             }),
-            { numRuns: 150 }
+            { numRuns: runs(150) }
         );
     });
 });
@@ -122,7 +186,7 @@ describe('fuzz: hostile deflate', () => {
             fc.property(fc.uint8Array({ minLength: 0, maxLength: 512 }), garbage => {
                 assertTotal(concat([header, garbage]));
             }),
-            { numRuns: 200 }
+            { numRuns: runs(200) }
         );
     });
 });
@@ -141,7 +205,7 @@ describe('fuzz: random element streams', () => {
             fc.property(fc.array(elementArb, { minLength: 0, maxLength: 12 }), elements => {
                 assertTotal(p10(TS.explicitLE, elements));
             }),
-            { numRuns: 250 }
+            { numRuns: runs(250) }
         );
     });
 
@@ -154,7 +218,7 @@ describe('fuzz: random element streams', () => {
                 });
                 assertTotal(p10(TS.implicitLE, elements));
             }),
-            { numRuns: 250 }
+            { numRuns: runs(250) }
         );
     });
 });

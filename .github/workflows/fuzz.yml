@@ -1,0 +1,42 @@
+name: Nightly fuzz
+
+# The parser reimplements code an undisclosed vulnerability was reported
+# against (upstream #282), so the fuzz properties are worth running far harder
+# than a PR's time budget allows. FUZZ_SCALE multiplies every property's
+# iteration count; counterexamples are uploaded as bytes to commit into
+# tests/fuzz-corpus/, which every run replays first.
+on:
+    schedule:
+        - cron: '17 5 * * *'
+    workflow_dispatch:
+        inputs:
+            scale:
+                description: 'FUZZ_SCALE multiplier for every property'
+                required: false
+                default: '50'
+
+jobs:
+    fuzz:
+        name: Fuzz (scale ${{ github.event.inputs.scale || 50 }})
+        runs-on: ubuntu-latest
+        timeout-minutes: 60
+        steps:
+            - uses: actions/checkout@v7
+            - uses: pnpm/action-setup@v6
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: 24
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile
+            - name: Run the fuzz suite at scale
+              env:
+                  FUZZ_SCALE: ${{ github.event.inputs.scale || 50 }}
+                  FUZZ_ARTIFACT_DIR: ${{ github.workspace }}/fuzz-counterexamples
+              run: pnpm run test:fuzz
+            - name: Upload counterexamples
+              if: failure()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: fuzz-counterexamples
+                  path: fuzz-counterexamples/
+                  if-no-files-found: ignore
