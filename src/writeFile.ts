@@ -10,7 +10,7 @@ import { DicomError } from './errors';
 import type { ParseResult } from './parse';
 import { NATIVE_TRANSFER_SYNTAXES, TS_DEFLATED_LE, TS_EXPLICIT_BE, TS_EXPLICIT_LE, TS_GE_PRIVATE_DLX, TS_IMPLICIT_LE } from './parse';
 import { TAG_PIXEL_DATA, tagToString, toTag, type Tag, type TagLike } from './tag';
-import { encodeDataSet, type EncodeOptions } from './writer';
+import { encodeDataSet, encodeDataSetTo, encodePlanInto, planEncode, type EncodeOptions, type WriteSink } from './writer';
 import { dataSet as buildDataSet, element, item, toWriteModel, type WriteDataSet, type WriteElement, type WriteItem } from './writeModel';
 
 /** Implementation Class UID for generated file meta groups (UUID-derived, 2.25 root). */
@@ -51,6 +51,8 @@ export interface WriteFileOptions {
     readonly charset?: EncodeOptions['charset'];
     /** Meta-group knobs: implementation identity, (0002,0016), extra group-2 elements (#39). */
     readonly meta?: MetaGroupOptions;
+    /** Bytes buffered before each flush in {@link writeFileTo} (default 64 KiB). */
+    readonly chunkSize?: number;
     /**
      * Emit intentionally non-conformant output for adversarial fixtures (#43):
      * relaxes the odd-length and length-field checks (see
@@ -174,27 +176,71 @@ function checkTransferSyntaxPayload(dataSet: WriteDataSet, transferSyntax: strin
     }
 }
 
-function encodedDataSetFor(options: WriteFileOptions, transferSyntax: string): Uint8Array {
+/** Validates the syntax and derives the dataset encode options for a write. */
+function encodeOptionsFor(options: WriteFileOptions, transferSyntax: string): EncodeOptions {
     if (transferSyntax === TS_EXPLICIT_BE || transferSyntax === TS_GE_PRIVATE_DLX) {
         throw new DicomError('unsupported', `transfer syntax ${transferSyntax} is read-only; the write path is little-endian`);
     }
     if (options.nonConformant !== true) {
         checkTransferSyntaxPayload(options.dataSet, transferSyntax);
     }
-    const explicitVr = transferSyntax !== TS_IMPLICIT_LE;
-    const encoded = encodeDataSet(options.dataSet, {
-        explicitVr,
+    return {
+        explicitVr: transferSyntax !== TS_IMPLICIT_LE,
         ...(options.charset === undefined ? {} : { charset: options.charset }),
         ...(options.nonConformant === undefined ? {} : { nonConformant: options.nonConformant }),
-    });
-    if (transferSyntax !== TS_DEFLATED_LE) {
-        return encoded;
-    }
+    };
+}
+
+/** Deflates an encoded dataset for the deflated transfer syntax. */
+function deflateDataSet(options: WriteFileOptions, encoded: Uint8Array): Uint8Array {
     const deflate = options.deflate ?? nodeDeflate();
     if (deflate === undefined) {
         throw new DicomError('no-inflater', 'deflated transfer syntax: no deflater available — supply options.deflate');
     }
     return deflate(encoded);
+}
+
+function encodedDataSetFor(options: WriteFileOptions, transferSyntax: string): Uint8Array {
+    const encodeOptions = encodeOptionsFor(options, transferSyntax);
+    const encoded = encodeDataSet(options.dataSet, encodeOptions);
+    return transferSyntax === TS_DEFLATED_LE ? deflateDataSet(options, encoded) : encoded;
+}
+
+/**
+ * Writes a complete Part-10 file: preamble + `DICM` + generated meta group +
+ * encoded dataset.
+ *
+ * @param options - Dataset, transfer syntax, meta identifiers
+ * @returns The file bytes
+ * @throws DicomError `invalid-argument`/`unsupported` on unencodable input
+ */
+/** The fixed header a Part-10 file starts with: preamble, `DICM`, meta group. */
+interface FileHeader {
+    readonly preamble: Uint8Array;
+    readonly meta: Uint8Array;
+    readonly transferSyntax: string;
+    /** Offset of the first dataset byte. */
+    readonly dataSetPosition: number;
+}
+
+function fileHeaderFor(options: WriteFileOptions): FileHeader {
+    const transferSyntax = options.transferSyntax ?? TS_EXPLICIT_LE;
+    const preamble = options.preamble ?? new Uint8Array(128);
+    if (preamble.length !== 128) {
+        throw new DicomError('invalid-argument', `preamble must be 128 bytes, got ${preamble.length}`);
+    }
+    const sopClassUid = options.sopClassUid ?? findStringValue(options.dataSet, 0x00080016) ?? '';
+    const sopInstanceUid = options.sopInstanceUid ?? findStringValue(options.dataSet, 0x00080018) ?? '';
+    const meta = buildMetaGroup(transferSyntax, sopClassUid, sopInstanceUid, options.meta ?? {});
+    return { preamble, meta, transferSyntax, dataSetPosition: 132 + meta.length };
+}
+
+/** Writes preamble + `DICM` + meta into `out`, returning the dataset offset. */
+function writeFileHeader(out: Uint8Array, header: FileHeader): number {
+    out.set(header.preamble, 0);
+    out.set([0x44, 0x49, 0x43, 0x4d], 128);
+    out.set(header.meta, 132);
+    return header.dataSetPosition;
 }
 
 /**
@@ -206,21 +252,52 @@ function encodedDataSetFor(options: WriteFileOptions, transferSyntax: string): U
  * @throws DicomError `invalid-argument`/`unsupported` on unencodable input
  */
 export function writeFile(options: WriteFileOptions): Uint8Array {
-    const transferSyntax = options.transferSyntax ?? TS_EXPLICIT_LE;
-    const preamble = options.preamble ?? new Uint8Array(128);
-    if (preamble.length !== 128) {
-        throw new DicomError('invalid-argument', `preamble must be 128 bytes, got ${preamble.length}`);
+    const header = fileHeaderFor(options);
+    if (header.transferSyntax === TS_DEFLATED_LE) {
+        // the deflater needs the whole encoded dataset, so this path keeps the copy
+        const deflated = encodedDataSetFor(options, header.transferSyntax);
+        const out = new Uint8Array(header.dataSetPosition + deflated.length);
+        out.set(deflated, writeFileHeader(out, header));
+        return out;
     }
-    const sopClassUid = options.sopClassUid ?? findStringValue(options.dataSet, 0x00080016) ?? '';
-    const sopInstanceUid = options.sopInstanceUid ?? findStringValue(options.dataSet, 0x00080018) ?? '';
-    const meta = buildMetaGroup(transferSyntax, sopClassUid, sopInstanceUid, options.meta ?? {});
-    const dataSetBytes = encodedDataSetFor(options, transferSyntax);
-    const out = new Uint8Array(128 + 4 + meta.length + dataSetBytes.length);
-    out.set(preamble, 0);
-    out.set([0x44, 0x49, 0x43, 0x4d], 128);
-    out.set(meta, 132);
-    out.set(dataSetBytes, 132 + meta.length);
+    // one allocation for the whole file: the dataset encodes straight into it,
+    // so the modify path no longer holds the dataset and the file at once (#41).
+    // The plan is reused, so the sizing pass runs once rather than per call.
+    const plan = planEncode(options.dataSet, encodeOptionsFor(options, header.transferSyntax));
+    const out = new Uint8Array(header.dataSetPosition + plan.total);
+    encodePlanInto(plan, out, writeFileHeader(out, header));
     return out;
+}
+
+/**
+ * Streams a complete Part-10 file to a sink, so peak memory tracks the chunk
+ * size rather than the file (#41).
+ *
+ * Chunks arrive in order: preamble, `DICM`, meta group, then the dataset in
+ * `chunkSize` pieces — with values larger than a chunk passed through
+ * uncopied (see {@link encodeDataSetTo} for the chunk-lifetime and
+ * backpressure contract). The deflated transfer syntax cannot be streamed —
+ * the deflater needs the whole dataset — so its payload arrives as a single
+ * chunk; everything else streams.
+ *
+ * @param sink - Receives each chunk in order
+ * @param options - Dataset, transfer syntax, meta identifiers, `chunkSize`
+ * @returns The total number of bytes written
+ * @throws DicomError `invalid-argument`/`unsupported` on unencodable input
+ */
+export function writeFileTo(sink: WriteSink, options: WriteFileOptions): number {
+    const header = fileHeaderFor(options);
+    sink(header.preamble);
+    sink(Uint8Array.from([0x44, 0x49, 0x43, 0x4d]));
+    sink(header.meta);
+    if (header.transferSyntax === TS_DEFLATED_LE) {
+        const deflated = encodedDataSetFor(options, header.transferSyntax);
+        sink(deflated);
+        return header.dataSetPosition + deflated.length;
+    }
+    const encodeOptions = encodeOptionsFor(options, header.transferSyntax);
+    const streamOptions: EncodeOptions = { ...encodeOptions, ...(options.chunkSize === undefined ? {} : { chunkSize: options.chunkSize }) };
+    return header.dataSetPosition + encodeDataSetTo(sink, options.dataSet, streamOptions);
 }
 
 /** Options for {@link serializeParsed}. */

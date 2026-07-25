@@ -87,7 +87,17 @@ export {
     type PixelDataView,
 } from './pixelData';
 export { DEFAULT_MAX_INFLATED_BYTES, type InflateOptions } from './inflate';
-export { encodeDataSet, type EncodeOptions } from './writer';
+export {
+    encodeDataSet,
+    encodeDataSetInto,
+    encodeDataSetTo,
+    encodePlanInto,
+    encodedLength,
+    planEncode,
+    type EncodeOptions,
+    type EncodePlan,
+    type WriteSink,
+} from './writer';
 export {
     IMPLEMENTATION_CLASS_UID,
     IMPLEMENTATION_VERSION_NAME,
@@ -95,6 +105,7 @@ export {
     modifyDataSet,
     serializeParsed,
     writeFile,
+    writeFileTo,
     type DataSetEdits,
     type MetaGroupOptions,
     type DeflateFn,
