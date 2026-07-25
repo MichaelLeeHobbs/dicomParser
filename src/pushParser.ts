@@ -24,7 +24,7 @@ import { DicomDataSet } from './dataSet';
 import type { DicomElement } from './element';
 import { DicomError } from './errors';
 import { readPart10Header, type Part10Header } from './part10';
-import { readElements } from './tokenizer';
+import { readElements, stopUpperBound } from './tokenizer';
 import {
     NATIVE_TRANSFER_SYNTAXES,
     TS_DEFLATED_LE,
@@ -324,7 +324,7 @@ export class PushParser {
         }
         // never observe past a caller-configured stop: parse() would not read
         // those headers, and the signals must not claim proofs parse cannot see
-        const userStop = this.options.stopAt === undefined ? undefined : toTag(this.options.stopAt.tag);
+        const userStop = this.options.stopAt === undefined ? undefined : stopUpperBound(this.options.stopAt);
         const probeTag = userStop === undefined ? Math.max(...targets) : Math.min(Math.max(...targets), userStop);
         const stream = new ByteStream(this.bytes(), { position: this.watermark, littleEndian: plan.littleEndian, strictEof: true });
         const result = readElements(stream, {

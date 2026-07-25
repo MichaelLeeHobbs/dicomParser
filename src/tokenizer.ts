@@ -42,8 +42,8 @@ import {
     type TagLike,
 } from './tag';
 
-/** Stop condition for partial parsing (root-level elements only). */
-export interface StopAtOption {
+/** Single-tag stop threshold (root-level elements only). */
+export interface StopAtTagOption {
     /** Parsing stops at the first root-level element with tag ≥ this tag. */
     readonly tag: TagLike;
     /**
@@ -55,13 +55,38 @@ export interface StopAtOption {
     readonly inclusive?: boolean;
 }
 
+/**
+ * Resolved-tag-set stop (issue #35): parsing stops at the first root-level
+ * element proving every listed tag answered (that element was parsed) or
+ * provably absent (a root element with a greater tag was read — data elements
+ * are stream-ordered per PS3.5 §7.1). Wanted elements are always parsed; the
+ * terminating element never is (it only marks the boundary, via `stoppedAt`).
+ * Bounds header-extraction cost by construction for objects with no tag near
+ * the end of tag space (SR, encapsulated PDF, RTSTRUCT), where a single-tag
+ * threshold like (7FE0,0010) never fires. Caveats: assumes ordered roots
+ * (non-conformant unordered files may resolve a tag as absent that appears
+ * later), and a non-conformant duplicate root tag keeps its first occurrence
+ * (a full parse keeps the last).
+ */
+export interface StopWhenResolvedOption {
+    /** The tags to resolve; must not be empty. */
+    readonly tags: readonly TagLike[];
+}
+
+/**
+ * Stop condition for partial parsing (root-level elements only): a single-tag
+ * ≥ threshold, or a resolved-tag set. A group bound needs no dedicated shape —
+ * `{ tag: tag(group + 1, 0x0000) }` stops after the last element of `group`.
+ */
+export type StopAtOption = StopAtTagOption | StopWhenResolvedOption;
+
 /** Options for {@link readElements}. */
 export interface ReadElementsOptions {
     /** `true` (default) for explicit VR, `false` for implicit VR. */
     readonly explicitVr?: boolean;
     /** VR source for implicit elements (the core is dictionary-free). */
     readonly vrLookup?: VrLookup;
-    /** Stop condition with ≥ semantics. */
+    /** Stop condition: single-tag ≥ threshold or resolved-tag set. */
     readonly stopAt?: StopAtOption;
     /** Maximum sequence nesting depth (default 128). */
     readonly maxDepth?: number;
@@ -127,6 +152,8 @@ class Tokenizer {
     private readonly vrLookup: VrLookup | undefined;
     private readonly stopTag: Tag | undefined;
     private readonly stopInclusive: boolean;
+    /** Remaining unresolved tags of a {@link StopWhenResolvedOption}. */
+    private readonly stopSet: Set<Tag> | undefined;
     private readonly maxDepth: number;
     private readonly maxElements: number;
     private readonly compressedTransferSyntax: boolean;
@@ -140,8 +167,19 @@ class Tokenizer {
     constructor(stream: ByteStream, options: ReadElementsOptions) {
         this.stream = stream;
         this.vrLookup = options.vrLookup;
-        this.stopTag = options.stopAt === undefined ? undefined : toTag(options.stopAt.tag);
-        this.stopInclusive = options.stopAt?.inclusive ?? false;
+        const stopAt = options.stopAt;
+        if (stopAt !== undefined && 'tags' in stopAt) {
+            if (stopAt.tags.length === 0) {
+                throw new DicomError('invalid-argument', 'stopAt.tags must not be empty');
+            }
+            this.stopTag = undefined;
+            this.stopInclusive = false;
+            this.stopSet = new Set(stopAt.tags.map(toTag));
+        } else {
+            this.stopTag = stopAt === undefined ? undefined : toTag(stopAt.tag);
+            this.stopInclusive = stopAt?.inclusive ?? false;
+            this.stopSet = undefined;
+        }
         this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
         this.maxElements = options.maxElements ?? DEFAULT_MAX_ELEMENTS;
         this.compressedTransferSyntax = options.compressedTransferSyntax ?? false;
@@ -346,6 +384,9 @@ class Tokenizer {
     /** Reads one element header and dispatches on its shape. */
     private readElement(frame: DataSetFrame): void {
         const header = frame.explicitVr ? readExplicitElementHeader(this.stream) : readImplicitElementHeader(this.stream, this.vrLookup);
+        if (frame.root && this.stopSet !== undefined && this.stopWhenResolved(header)) {
+            return;
+        }
         if (frame.root && this.stopTag !== undefined && header.tag >= this.stopTag) {
             this.stoppedAt = header.tag;
             this.stopPending = true;
@@ -359,6 +400,29 @@ class Tokenizer {
         } else {
             this.dispatchImplicit(frame, header);
         }
+    }
+
+    /**
+     * Resolved-tag-set stop check, run per root element header: tags below the
+     * header are proven absent (ordered stream) and pruned; a wanted header is
+     * answered and parsed. The first non-wanted header with nothing left to
+     * resolve terminates parsing (exclusive) and records `stoppedAt`. Returns
+     * `true` when parsing stopped (the stream is rewound to the header start).
+     */
+    private stopWhenResolved(header: ElementHeader): boolean {
+        const set = this.stopSet as Set<Tag>;
+        for (const tag of set) {
+            if (tag < header.tag) {
+                set.delete(tag);
+            }
+        }
+        if (set.delete(header.tag) || set.size > 0) {
+            return false;
+        }
+        this.stoppedAt = header.tag;
+        this.stopPending = true;
+        this.stream.position = header.startOffset;
+        return true;
     }
 
     private dispatchExplicit(frame: DataSetFrame, header: ElementHeader): void {
@@ -750,6 +814,21 @@ class Tokenizer {
         }
         this.warn(code, message);
     }
+}
+
+/**
+ * Upper bound of root tags a stop condition can cause to be read: the walk
+ * never reads a header beyond the first tag ≥ this bound. Used to clamp
+ * signal probes (PushParser) so they cannot observe past a caller's stop.
+ *
+ * @param option - The stop condition
+ * @returns The bounding tag
+ */
+export function stopUpperBound(option: StopAtOption): Tag {
+    if ('tags' in option) {
+        return option.tags.reduce<Tag>((max, tag) => Math.max(max, toTag(tag)), 0);
+    }
+    return toTag(option.tag);
 }
 
 /**
