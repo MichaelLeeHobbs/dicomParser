@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { deflateRawSync } from 'node:zlib';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parse } from '../src/parse';
 import { DEFAULT_MAX_INFLATED_BYTES } from '../src/inflate';
@@ -35,6 +36,21 @@ function assertTotal(bytes: Uint8Array, label = 'fuzz'): void {
 
 describe('fuzz: crash-regression corpus', () => {
     const seeds = loadFuzzCorpus();
+
+    it('names counterexample artifacts after the case, without doubling the extension', () => {
+        const dir = mkdtempSync(join(tmpdir(), 'fuzz-artifact-'));
+        const previous = process.env.FUZZ_ARTIFACT_DIR;
+        process.env.FUZZ_ARTIFACT_DIR = dir;
+        try {
+            recordCounterexample('empty.bin', Uint8Array.from([1, 2]));
+            recordCounterexample('truncated-meta-group.bin@42', Uint8Array.from([3]));
+            expect(readdirSync(dir).sort()).toEqual(['empty.bin', 'truncated-meta-group.bin_42.bin']);
+        } finally {
+            if (previous === undefined) delete process.env.FUZZ_ARTIFACT_DIR;
+            else process.env.FUZZ_ARTIFACT_DIR = previous;
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
 
     it('replays every persisted seed without throwing', () => {
         expect(seeds.length).toBeGreaterThan(0);

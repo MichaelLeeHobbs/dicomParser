@@ -70,5 +70,8 @@ export function recordCounterexample(name: string, bytes: Uint8Array): void {
         return;
     }
     mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, `${name.replace(/[^a-z0-9._-]/gi, '_')}.bin`), bytes);
+    // labels are often a corpus file name already ('empty.bin'), so strip the
+    // extension before re-adding it rather than emitting 'empty.bin.bin'
+    const stem = name.replace(/\.bin$/i, '').replace(/[^a-z0-9._-]/gi, '_');
+    writeFileSync(join(dir, `${stem}.bin`), bytes);
 }
