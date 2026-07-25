@@ -6,6 +6,7 @@ import { parse, TS_DEFLATED_LE, TS_EXPLICIT_LE, TS_IMPLICIT_LE } from './parse';
 import { encodeDataSet } from './writer';
 import { buildMetaGroup, modifyDataSet, serializeParsed, writeFile } from './writeFile';
 import { dataSet, element, encodeBigintValue, encodeNumericValue, encodeStringValue, item, toWriteModel } from './writeModel';
+import { isPrivateTag, tagGroup, tagToString } from './tag';
 import type { EncapsulatedElement, SequenceElement } from './element';
 import { concat, explicitEl, latin1 } from '../tests/helpers/p10';
 
@@ -269,6 +270,122 @@ describe('writeFile', () => {
         expect(result.ok).toBe(true);
         expect(result.meta.string('x00020016')).toBe('INGEST_SCP');
         expect(result.meta.string('x00020013')).toBe('OIE_2');
+    });
+});
+
+describe('modifyDataSet — nested + predicate edits (#42)', () => {
+    /** A file with private tags, an overlay group and PN both at root and nested. */
+    function nestedFile(): Uint8Array {
+        return writeFile({
+            dataSet: dataSet([
+                element('00080060', 'CS', 'CT'),
+                element('00090010', 'LO', 'ACME PRIVATE'),
+                element('00100010', 'PN', 'Doe^Jane'),
+                element('00081110', 'SQ', [
+                    item([element('00090010', 'LO', 'NESTED PRIVATE'), element('00100010', 'PN', 'Doe^Jane'), element('00081150', 'UI', '1.2.3')]),
+                    item([element('00100010', 'PN', 'Roe^Rick')]),
+                ]),
+                element('60000010', 'US', [16]),
+            ]),
+        });
+    }
+
+    it('removeWhere strips matching tags at every depth', () => {
+        const parsed = parse(nestedFile());
+        const edited = modifyDataSet(parsed.dataSet, { removeWhere: tag => isPrivateTag(tag) });
+        const result = parse(writeFile({ dataSet: edited }));
+        expect(result.error).toBeUndefined();
+        expect(result.dataSet.element('x00090010')).toBeUndefined();
+        const sq = result.dataSet.element('x00081110') as SequenceElement;
+        expect(sq.items[0]?.dataSet.element('x00090010')).toBeUndefined();
+        // untouched neighbours survive at both levels
+        expect(result.dataSet.string('x00080060')).toBe('CT');
+        expect(sq.items[0]?.dataSet.string('x00081150')).toBe('1.2.3');
+    });
+
+    it('removeWhere expresses group ranges (overlay 60xx) without a range type', () => {
+        const parsed = parse(nestedFile());
+        const edited = modifyDataSet(parsed.dataSet, { removeWhere: tag => (tagGroup(tag) & 0xff00) === 0x6000 });
+        const result = parse(writeFile({ dataSet: edited }));
+        expect(result.dataSet.element('x60000010')).toBeUndefined();
+        expect(result.dataSet.element('x00080060')).toBeDefined();
+    });
+
+    it('mapElements redacts a value at every depth and reports the enclosing path', () => {
+        const parsed = parse(nestedFile());
+        const paths: string[][] = [];
+        const edited = modifyDataSet(parsed.dataSet, {
+            mapElements: (el, path) => {
+                if (el.tag === 0x00100010) {
+                    paths.push(path.map(tagToString));
+                    return element('00100010', 'PN', 'ANON^ANON');
+                }
+                return el;
+            },
+        });
+        const result = parse(writeFile({ dataSet: edited }));
+        expect(result.dataSet.string('x00100010')).toBe('ANON^ANON');
+        const sq = result.dataSet.element('x00081110') as SequenceElement;
+        expect(sq.items[0]?.dataSet.string('x00100010')).toBe('ANON^ANON');
+        expect(sq.items[1]?.dataSet.string('x00100010')).toBe('ANON^ANON');
+        // depth-first: a sequence's items are visited before the elements that
+        // follow it, and the root PN reports an empty path
+        expect(paths).toEqual([['x00081110'], ['x00081110'], []]);
+    });
+
+    it('mapElements returning undefined removes the element', () => {
+        const parsed = parse(nestedFile());
+        const edited = modifyDataSet(parsed.dataSet, { mapElements: el => (el.tag === 0x00081150 ? undefined : el) });
+        const result = parse(writeFile({ dataSet: edited }));
+        const sq = result.dataSet.element('x00081110') as SequenceElement;
+        expect(sq.items[0]?.dataSet.element('x00081150')).toBeUndefined();
+        expect(sq.items[0]?.dataSet.string('x00100010')).toBe('Doe^Jane');
+    });
+
+    it('applies root set before the hooks, and appended set elements bypass them', () => {
+        const parsed = parse(nestedFile());
+        const seen: string[] = [];
+        const edited = modifyDataSet(parsed.dataSet, {
+            set: [element('00080060', 'CS', 'MR'), element('00104000', 'LT', 'added')],
+            removeWhere: tag => tag === 0x00104000, // would delete the addition if it applied
+            mapElements: el => {
+                seen.push(tagToString(el.tag));
+                return el;
+            },
+        });
+        const result = parse(writeFile({ dataSet: edited }));
+        expect(result.dataSet.string('x00080060')).toBe('MR'); // replacement won
+        expect(result.dataSet.string('x00104000')).toBe('added'); // append survived the predicate
+        expect(seen).not.toContain('x00104000');
+    });
+
+    it('leaves sequence structure intact: item count and undefined-length flags', () => {
+        const withUndefined = writeFile({
+            dataSet: dataSet([{ ...element('00081110', 'SQ', [item([element('00080100', 'SH', 'AB')], true)]), undefinedLength: true }]),
+        });
+        const parsed = parse(withUndefined);
+        const edited = modifyDataSet(parsed.dataSet, { removeWhere: () => false });
+        const result = parse(writeFile({ dataSet: edited }));
+        const sq = result.dataSet.element('x00081110') as SequenceElement;
+        expect(sq.hadUndefinedLength).toBe(true);
+        expect(sq.items).toHaveLength(1);
+        expect(sq.items[0]?.hadUndefinedLength).toBe(true);
+        expect(sq.items[0]?.dataSet.string('x00080100')).toBe('AB');
+    });
+
+    it('anonymizes end to end: private tags out, identifiers redacted everywhere', () => {
+        const parsed = parse(nestedFile());
+        const edited = modifyDataSet(parsed.dataSet, {
+            removeWhere: tag => isPrivateTag(tag),
+            mapElements: el => (el.vr === 'PN' ? element(el.tag, 'PN', 'ANON^ANON') : el),
+        });
+        const result = parse(writeFile({ dataSet: edited }));
+        expect(result.error).toBeUndefined();
+        const sq = result.dataSet.element('x00081110') as SequenceElement;
+        expect(result.dataSet.string('x00100010')).toBe('ANON^ANON');
+        expect(result.dataSet.element('x00090010')).toBeUndefined();
+        expect(sq.items[0]?.dataSet.element('x00090010')).toBeUndefined();
+        expect(sq.items[0]?.dataSet.string('x00100010')).toBe('ANON^ANON');
     });
 });
 

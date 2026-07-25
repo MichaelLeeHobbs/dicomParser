@@ -359,6 +359,9 @@ export interface DataSetEdits {
      * {@link removeWhere}; a returned sequence is then walked, so a transform
      * applies to the replacement's items rather than the original's.
      *
+     * Elements are visited depth-first in tag order: a sequence's items are
+     * transformed before the elements that follow it.
+     *
      * @param element - The element as it stands after the earlier edits
      * @param path - Enclosing sequence tags, outermost first (empty at the root)
      */
