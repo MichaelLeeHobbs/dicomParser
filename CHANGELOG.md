@@ -17,6 +17,19 @@ from the `v2.0.0-rc.3` tag once the downstream soak passes.
   code-extension values that cross a `^`/`=` boundary without their own reset
   escape; multi-byte (kanji) sets keep suppressing delimiter checks as before.
 
+### Fixed
+
+- Big-endian sources are transcoded on write (#84). A file parsed from Explicit
+  VR Big Endian holds its values as views over the source buffer, so
+  `toWriteModel` → `writeFile` emitted big-endian bytes under the writer's
+  little-endian declaration: the output parsed cleanly and was silently wrong
+  (`Rows` 512 read back as 2), including through the `modifyDataSet`
+  anonymization path. Values of endianness-sensitive VRs are now byte-swapped at
+  their own unit width — `AT` in 2-byte halves, `OW` as 16-bit words, `OB`/`UN`
+  and string VRs untouched. Little-endian sources keep their zero-copy views and
+  byte-identical output. (`serializeParsed` already refused big-endian input and
+  still does; the writer remains little-endian only — see the README.)
+
 ### Added
 
 - Streaming and into-buffer write paths (#41): `encodedLength` sizes an

@@ -13,6 +13,7 @@
 import type { DicomDataSet } from './dataSet';
 import type { DicomElement } from './element';
 import { DicomError } from './errors';
+import { endianUnitBytes } from './vr';
 import { toTag, type Tag, type TagLike } from './tag';
 
 /** A value to encode, tagged by how it is expressed. */
@@ -258,10 +259,45 @@ function convertElements(parsed: DicomDataSet, frame: ModelFrame, stack: ModelFr
         if (source.kind === 'unknown') {
             throw new DicomError('invalid-argument', 'toWriteModel: undefined-length non-sequence elements cannot be re-encoded');
         }
+        const raw = parsed.bytes.subarray(source.dataOffset, source.dataOffset + source.length);
         frame.out.push({
             tag: source.tag,
             vr: source.vr,
-            value: { kind: 'bytes', bytes: parsed.bytes.subarray(source.dataOffset, source.dataOffset + source.length) },
+            value: { kind: 'bytes', bytes: parsed.littleEndian ? raw : toLittleEndianValue(raw, source.vr) },
         });
     }
+}
+
+/**
+ * Byte-swaps a big-endian value into little-endian order (#84).
+ *
+ * Parsed values are views over the source buffer, so a big-endian file's
+ * numeric bytes would otherwise be emitted verbatim under the writer's
+ * little-endian declaration — a file that parses cleanly and is silently
+ * wrong. Byte-oriented and string VRs are returned unchanged (still zero-copy);
+ * a trailing partial unit from a malformed length is left as-is rather than
+ * half-swapped.
+ *
+ * @param bytes - The value bytes as stored in the big-endian source
+ * @param vr - The element's VR, which fixes the swap unit
+ * @returns A little-endian copy, or the original view when no swap applies
+ */
+function toLittleEndianValue(bytes: Uint8Array, vr: string | undefined): Uint8Array {
+    const unit = endianUnitBytes(vr);
+    if (unit === 1) {
+        return bytes;
+    }
+    const out = Uint8Array.from(bytes);
+    const half = unit / 2;
+    const whole = Math.floor(out.length / unit) * unit;
+    for (let at = 0; at < whole; at += unit) {
+        for (let i = 0; i < half; i++) {
+            const low = at + i;
+            const high = at + unit - 1 - i;
+            const swap = out[low] as number;
+            out[low] = out[high] as number;
+            out[high] = swap;
+        }
+    }
+    return out;
 }

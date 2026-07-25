@@ -52,6 +52,37 @@ export type Vr = (typeof KNOWN_VRS)[number];
 const KNOWN_VR_SET: ReadonlySet<string> = new Set(KNOWN_VRS);
 
 /** Tests whether a two-character code is a known VR. */
+/**
+ * Bytes per value for VRs whose encoding is endianness-sensitive, or `1` for
+ * byte-oriented and string VRs, which need no swapping.
+ *
+ * `AT` is a pair of 16-bit values (group, element), so it swaps in 2-byte
+ * units — not as one 4-byte quantity.
+ *
+ * @param vr - The VR code, when known
+ * @returns The swap unit in bytes (`1` means "do not swap")
+ */
+const ENDIAN_UNIT_BYTES: ReadonlyMap<string, number> = new Map([
+    ['US', 2],
+    ['SS', 2],
+    ['OW', 2],
+    ['AT', 2],
+    ['UL', 4],
+    ['SL', 4],
+    ['FL', 4],
+    ['OL', 4],
+    ['OF', 4],
+    ['FD', 8],
+    ['SV', 8],
+    ['UV', 8],
+    ['OD', 8],
+    ['OV', 8],
+]);
+
+export function endianUnitBytes(vr: string | undefined): number {
+    return vr === undefined ? 1 : (ENDIAN_UNIT_BYTES.get(vr) ?? 1);
+}
+
 export function isKnownVr(value: string): value is Vr {
     return KNOWN_VR_SET.has(value);
 }
