@@ -184,6 +184,23 @@ for await (const chunk of stream) {
 const result = parser.end(); // identical to parse() of the whole buffer
 ```
 
+### Anonymization edits (nested + predicate)
+
+`modifyDataSet` takes root-level exact edits plus two hooks that apply at every
+depth, including inside sequence items:
+
+```ts
+import { isPrivateTag, modifyDataSet, element, parse, writeFile } from '@ubercode/dicom-parser';
+
+const parsed = parse(bytes);
+const edited = modifyDataSet(parsed.dataSet, {
+    remove: ['x00081030'], // root, exact tag
+    removeWhere: tag => isPrivateTag(tag), // every depth; ranges are just predicates
+    mapElements: el => (el.vr === 'PN' ? element(el.tag, 'PN', 'ANON^ANON') : el),
+});
+const anonymized = writeFile({ dataSet: edited });
+```
+
 ### Lenient-mode options
 
 | Option                          | Purpose                                                                                          |
