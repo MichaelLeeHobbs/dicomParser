@@ -8,7 +8,7 @@ import { buildMetaGroup, modifyDataSet, serializeParsed, writeFile } from './wri
 import { dataSet, element, encodeBigintValue, encodeNumericValue, encodeStringValue, item, toWriteModel } from './writeModel';
 import { isPrivateTag, tagGroup, tagToString } from './tag';
 import type { EncapsulatedElement, SequenceElement } from './element';
-import { concat, explicitEl, latin1 } from '../tests/helpers/p10';
+import { concat, explicitEl, latin1, p10, sqExplicit, tagBytes, TS } from '../tests/helpers/p10';
 
 describe('encodeStringValue', () => {
     it('pads to even length: space for text, NUL for UI', () => {
@@ -270,6 +270,90 @@ describe('writeFile', () => {
         expect(result.ok).toBe(true);
         expect(result.meta.string('x00020016')).toBe('INGEST_SCP');
         expect(result.meta.string('x00020013')).toBe('OIE_2');
+    });
+});
+
+describe('big-endian sources transcode to little-endian on write (#84)', () => {
+    const be = (tag: string, vr: string, value: Uint8Array): Uint8Array => explicitEl(tag, vr, value, true);
+    const bytes = (...values: number[]): Uint8Array => Uint8Array.from(values);
+
+    it('fixes the reported repro: Rows survives the round trip', () => {
+        const beFile = p10(TS.explicitBE, [be('00280010', 'US', bytes(0x02, 0x00))]); // 512, big-endian
+        const parsed = parse(beFile);
+        expect(parsed.transferSyntax).toBe(TS.explicitBE);
+        expect(parsed.dataSet.uint16('x00280010')).toBe(512);
+
+        const rewritten = writeFile({ dataSet: toWriteModel(parsed.dataSet) });
+        const reparsed = parse(rewritten);
+        expect(reparsed.transferSyntax).toBe(TS_EXPLICIT_LE);
+        expect(reparsed.dataSet.uint16('x00280010')).toBe(512);
+    });
+
+    it('swaps every endianness-sensitive VR at its own unit width', () => {
+        const beFile = p10(TS.explicitBE, [
+            be('00080060', 'CS', latin1('CT')), // string: untouched
+            be('00280010', 'US', bytes(0x02, 0x00, 0x01, 0x00)), // 512, 256
+            be('00281052', 'SL', bytes(0xff, 0xff, 0xff, 0xfe)), // -2
+            be('00181065', 'AT', concat([tagBytes('00181065', true), tagBytes('7FE00010', true)])),
+            be('00720082', 'SV', bytes(0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xd6)), // -42
+            be('7FE00010', 'OW', bytes(0x11, 0x22, 0x33, 0x44)),
+            be('00420011', 'OB', bytes(0x01, 0x02, 0x03, 0x04)), // byte stream: untouched
+        ]);
+        const parsed = parse(beFile);
+        const reparsed = parse(writeFile({ dataSet: toWriteModel(parsed.dataSet) }));
+        expect(reparsed.error).toBeUndefined();
+
+        expect(reparsed.dataSet.string('x00080060')).toBe('CT');
+        expect(reparsed.dataSet.uint16('x00280010', 0)).toBe(512);
+        expect(reparsed.dataSet.uint16('x00280010', 1)).toBe(256);
+        expect(reparsed.dataSet.int32('x00281052')).toBe(-2);
+        expect(reparsed.dataSet.attributeTag('x00181065', 0)).toBe(0x00181065);
+        expect(reparsed.dataSet.attributeTag('x00181065', 1)).toBe(0x7fe00010);
+        expect(reparsed.dataSet.int64('x00720082')).toBe(-42n);
+        // OW swaps as 16-bit words; OB is an opaque byte stream and must not move
+        expect([...(reparsed.dataSet.rawBytes('x7fe00010') as Uint8Array)]).toEqual([0x22, 0x11, 0x44, 0x33]);
+        expect([...(reparsed.dataSet.rawBytes('x00420011') as Uint8Array)]).toEqual([0x01, 0x02, 0x03, 0x04]);
+    });
+
+    it('transcodes inside sequence items too', () => {
+        const inner = concat([be('00280010', 'US', bytes(0x02, 0x00)), be('00080100', 'SH', latin1('AB'))]);
+        const beFile = p10(TS.explicitBE, [sqExplicit('00081110', [inner], true)]);
+        const parsed = parse(beFile);
+        const reparsed = parse(writeFile({ dataSet: toWriteModel(parsed.dataSet) }));
+        const sq = reparsed.dataSet.element('x00081110') as SequenceElement;
+        expect(sq.items[0]?.dataSet.uint16('x00280010')).toBe(512);
+        expect(sq.items[0]?.dataSet.string('x00080100')).toBe('AB');
+    });
+
+    it('covers the reachable path: parse a big-endian study, anonymize, forward', () => {
+        const beFile = p10(TS.explicitBE, [
+            be('00100010', 'PN', latin1('Doe^Jane')),
+            be('00280010', 'US', bytes(0x02, 0x00)),
+            be('00280011', 'US', bytes(0x01, 0x00)),
+        ]);
+        const parsed = parse(beFile);
+        const edited = modifyDataSet(parsed.dataSet, { set: [element('00100010', 'PN', 'ANON^ANON')] });
+        const reparsed = parse(writeFile({ dataSet: edited }));
+        expect(reparsed.dataSet.string('x00100010')).toBe('ANON^ANON');
+        expect(reparsed.dataSet.uint16('x00280010')).toBe(512); // geometry survives the anonymization
+        expect(reparsed.dataSet.uint16('x00280011')).toBe(256);
+    });
+
+    it('leaves little-endian sources zero-copy and byte-identical', () => {
+        const leFile = p10(TS.explicitLE, [explicitEl('00280010', 'US', bytes(0x00, 0x02))]);
+        const parsed = parse(leFile);
+        const model = toWriteModel(parsed.dataSet);
+        const value = model.elements[0]?.value as { kind: 'bytes'; bytes: Uint8Array };
+        expect(value.bytes.buffer).toBe(parsed.bytes.buffer); // still a view, no copy
+        // the dataset re-encodes to exactly the original element bytes (whole-file
+        // identity is serializeParsed's property; writeFile regenerates the meta)
+        expect([...encodeDataSet(model)]).toEqual([...explicitEl('00280010', 'US', bytes(0x00, 0x02))]);
+    });
+
+    it('still refuses to emit big endian', () => {
+        const parsed = parse(p10(TS.explicitBE, [be('00280010', 'US', bytes(0x02, 0x00))]));
+        expect(() => writeFile({ dataSet: toWriteModel(parsed.dataSet), transferSyntax: TS.explicitBE })).toThrow(/read-only/);
+        expect(() => serializeParsed(parsed)).toThrow(/read-only/);
     });
 });
 
