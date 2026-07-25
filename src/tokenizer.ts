@@ -201,9 +201,7 @@ class Tokenizer {
      * parsing resumes after it. Returns `false` when no fallback exists.
      */
     private recoverToFallback(cause: DicomError): boolean {
-        // Resource bounds are terminal — rolling back and retrying would just
-        // re-hit the limit (the count never decreases) or overflow the stack.
-        if (cause.code === 'limit-exceeded' || cause.code === 'depth-exceeded') {
+        if (this.isTerminal(cause)) {
             return false;
         }
         let fallbackIndex = -1;
@@ -239,6 +237,24 @@ class Tokenizer {
             hadUndefinedLength: false,
         });
         return true;
+    }
+
+    /**
+     * Failures the speculative fallback must never recover. Resource bounds
+     * are terminal — rolling back and retrying would just re-hit the limit
+     * (the count never decreases) or overflow the stack. Truncation is
+     * terminal too: under strict EOF, any error carrying `totalNeeded` is
+     * truncation evidence regardless of its code (`truncated`, a
+     * buffer-overread from a truncated header, an annotated malformed
+     * overrun) — recovering would let a speculative sequence swallow an
+     * end-of-input hit and misreport a prefix as complete. In tolerant mode
+     * those stay recoverable (unchanged parse behavior).
+     */
+    private isTerminal(cause: DicomError): boolean {
+        if (cause.code === 'limit-exceeded' || cause.code === 'depth-exceeded' || cause.code === 'truncated') {
+            return true;
+        }
+        return this.stream.strictEof && cause.totalNeeded !== undefined;
     }
 
     /** Unwinds open frames after a failure so partial results survive. */
@@ -290,7 +306,9 @@ class Tokenizer {
             return;
         }
         if (frame.undefinedLength && this.stream.remaining < 8) {
-            this.warn('missing-item-delimiter', 'eof encountered before finding item delimiter (FFFE,E00D) in item of undefined length');
+            this.eofAnomaly('missing-item-delimiter', 'eof encountered before finding item delimiter (FFFE,E00D) in item of undefined length', {
+                totalNeeded: this.stream.position + 8,
+            });
             this.stream.seek(this.stream.remaining);
             this.finalizeDataSet(frame, this.stream.position, this.stream.position);
             return;
@@ -459,7 +477,10 @@ class Tokenizer {
                     { offset: header.startOffset }
                 );
             }
-            this.warn('unexpected-eof', `element ${tagToString(header.tag)} length ${length} overruns end of data; value truncated`);
+            this.eofAnomaly('unexpected-eof', `element ${tagToString(header.tag)} length ${length} overruns end of data; value truncated`, {
+                offset: header.startOffset,
+                totalNeeded: end,
+            });
             length = frame.bound - header.dataOffset;
         }
         this.stream.seek(length);
@@ -489,7 +510,14 @@ class Tokenizer {
         let contentEnd: number;
         for (;;) {
             if (this.stream.position >= maxEnd || this.stream.remaining < 8) {
-                this.warn('missing-item-delimiter', `element ${tagToString(header.tag)} of undefined length has no delimitation item; using end of data`);
+                const message = `element ${tagToString(header.tag)} of undefined length has no delimitation item; using end of data`;
+                if (maxEnd === this.stream.length) {
+                    // the scan ran out at physical end of input (an interior bound
+                    // is corruption, not truncation — always tolerated)
+                    this.eofAnomaly('missing-item-delimiter', message, { offset: header.startOffset, totalNeeded: this.stream.position + 8 });
+                } else {
+                    this.warn('missing-item-delimiter', message);
+                }
                 this.stream.seek(maxEnd - this.stream.position);
                 contentEnd = this.stream.position;
                 break;
@@ -521,10 +549,12 @@ class Tokenizer {
         if (!header.hadUndefinedLength) {
             bound = header.dataOffset + header.lengthField;
             if (bound > frame.bound) {
+                // overrunning an interior bound is corruption; overrunning the
+                // physical end of input is truncation evidence (totalNeeded)
                 throw new DicomError(
                     'malformed',
                     `sequence ${tagToString(header.tag)} length ${header.lengthField} overruns its enclosing bound at ${frame.bound}`,
-                    { offset: header.startOffset }
+                    { offset: header.startOffset, ...(frame.bound === this.stream.length ? { totalNeeded: bound } : {}) }
                 );
             }
         }
@@ -549,7 +579,11 @@ class Tokenizer {
         }
         if (frame.undefinedLength) {
             if (this.stream.remaining < 8) {
-                this.warn('missing-sequence-delimiter', `eof encountered before finding sequence delimiter (FFFE,E0DD) for ${tagToString(frame.header.tag)}`);
+                this.eofAnomaly(
+                    'missing-sequence-delimiter',
+                    `eof encountered before finding sequence delimiter (FFFE,E0DD) for ${tagToString(frame.header.tag)}`,
+                    { totalNeeded: this.stream.position + 8 }
+                );
                 this.stream.seek(this.stream.remaining);
                 this.finalizeSequence(frame, this.stream.position, this.stream.position);
                 return;
@@ -600,7 +634,13 @@ class Tokenizer {
             const declaredEnd = this.stream.position + itemLength;
             if (declaredEnd > frame.bound) {
                 if (declaredEnd > this.stream.length) {
-                    throw new DicomError('malformed', `sequence item length ${itemLength} at offset ${itemStart} overruns end of data`, { offset: itemStart });
+                    // truncation evidence only when the enclosing bound is the
+                    // physical end of input — an interior sequence end already
+                    // proves the item overruns its sequence, more bytes or not
+                    throw new DicomError('malformed', `sequence item length ${itemLength} at offset ${itemStart} overruns end of data`, {
+                        offset: itemStart,
+                        ...(frame.bound === this.stream.length ? { totalNeeded: declaredEnd } : {}),
+                    });
                 }
                 this.warn('length-adjusted', `sequence item length ${itemLength} at offset ${itemStart} overruns its sequence; clamped to the sequence bound`);
             }
@@ -697,6 +737,18 @@ class Tokenizer {
 
     private warn(code: ParseWarningCode, message: string): void {
         this.stream.warnings.push({ code, message, offset: this.stream.position });
+    }
+
+    /**
+     * Reports an end-of-input anomaly: a warning in the default tolerant mode,
+     * a typed `truncated` error (carrying `totalNeeded`) under strict EOF.
+     * Call only where the anomaly is at the physical end of input.
+     */
+    private eofAnomaly(code: ParseWarningCode, message: string, info: { readonly offset?: number; readonly totalNeeded: number }): void {
+        if (this.stream.strictEof) {
+            throw new DicomError('truncated', message, { offset: info.offset ?? this.stream.position, totalNeeded: info.totalNeeded });
+        }
+        this.warn(code, message);
     }
 }
 

@@ -42,6 +42,8 @@ export { inflateRaw, inflateRawAsync, hasSyncInflate, type InflateFn } from './i
 export {
     parse,
     parseAsync,
+    parsePartial,
+    parsePartialAsync,
     TS_DEFLATED_LE,
     TS_EXPLICIT_BE,
     TS_EXPLICIT_LE,
@@ -49,6 +51,8 @@ export {
     TS_IMPLICIT_LE,
     type ParseOptions,
     type ParseResult,
+    type PartialParseResult,
+    type TruncationInfo,
 } from './parse';
 export { isValidUid, parseDA, parsePN, parseTM, type DicomDate, type DicomTime, type PersonName } from './valueParsers';
 export {

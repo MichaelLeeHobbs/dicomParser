@@ -89,6 +89,23 @@ head.bulk.get(0x7fe00010); // { offset, length, vr, encapsulated } — fetch the
 head.bytesRead; // ≪ file size (≈98% less on pixel-data-dominant files)
 ```
 
+### Incremental ingest (is this buffer complete?)
+
+`parsePartial` classifies a byte prefix — `complete`, `needMoreBytes` (definite
+truncation, with the smallest total length that could let parsing advance), or
+`malformed` (more bytes cannot help) — so receive paths can distinguish "keep
+reading" from "give up" and size the next read instead of guessing.
+
+```ts
+import { parsePartial } from '@ubercode/dicom-parser';
+
+const outcome = parsePartial(buffered);
+if (outcome.outcome === 'needMoreBytes') {
+    // cap totalNeeded against your policy limit — it derives from untrusted lengths
+    await readUpTo(outcome.truncation.totalNeeded);
+} // 'complete' → outcome.result is a normal ParseResult; 'malformed' → result.error
+```
+
 ### Lenient-mode options
 
 | Option                          | Purpose                                                                                          |
