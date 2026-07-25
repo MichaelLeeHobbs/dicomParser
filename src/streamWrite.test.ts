@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { DicomError } from './errors';
 import { parse, TS_DEFLATED_LE, TS_EXPLICIT_BE, TS_EXPLICIT_LE, TS_IMPLICIT_LE } from './parse';
-import { encodeDataSet, encodeDataSetInto, encodeDataSetTo, encodedLength } from './writer';
+import { encodeDataSet, encodeDataSetInto, encodeDataSetTo, encodePlanInto, encodedLength, planEncode } from './writer';
 import { modifyDataSet, writeFile, writeFileTo } from './writeFile';
 import { dataSet, element, item, toWriteModel } from './writeModel';
 import { collectTestImages } from '../tests/helpers/corpus';
@@ -79,7 +79,40 @@ describe('encodedLength / encodeDataSetInto (#41)', () => {
     });
 });
 
+describe('planEncode / encodePlanInto (#41)', () => {
+    it('sizes once and emits without re-sizing', () => {
+        const model = richDataSet();
+        const plan = planEncode(model);
+        expect(plan.total).toBe(encodedLength(model));
+        const target = new Uint8Array(plan.total);
+        expect(encodePlanInto(plan, target)).toBe(plan.total);
+        expect([...target]).toEqual([...encodeDataSet(model)]);
+    });
+
+    it('honours the options the plan was built with', () => {
+        const model = richDataSet();
+        const implicitPlan = planEncode(model, { explicitVr: false });
+        const target = new Uint8Array(implicitPlan.total);
+        encodePlanInto(implicitPlan, target);
+        expect([...target]).toEqual([...encodeDataSet(model, { explicitVr: false })]);
+    });
+
+    it('rejects a target that cannot hold the plan', () => {
+        const plan = planEncode(richDataSet());
+        expect(() => encodePlanInto(plan, new Uint8Array(plan.total - 1))).toThrow(/do not fit/);
+        expect(() => encodePlanInto(plan, new Uint8Array(plan.total), 1)).toThrow(/do not fit/);
+    });
+});
+
 describe('encodeDataSetTo (#41)', () => {
+    it('rejects an invalid chunkSize instead of silently clamping it', () => {
+        const model = dataSet([element('00080060', 'CS', 'CT')]);
+        for (const chunkSize of [0, 1, 15, -64, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+            expect(() => encodeDataSetTo(() => undefined, model, { chunkSize }), `chunkSize ${chunkSize}`).toThrow(/chunkSize must be an integer/);
+        }
+        expect(() => encodeDataSetTo(() => undefined, model, { chunkSize: 16 })).not.toThrow();
+    });
+
     it('streams bytes identical to encodeDataSet, at every chunk size', () => {
         const model = richDataSet();
         const expected = encodeDataSet(model);

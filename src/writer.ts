@@ -345,7 +345,7 @@ class SinkEmitter implements Emitter {
 
     constructor(sink: WriteSink, chunkSize: number) {
         this.sink = sink;
-        this.buffer = new Uint8Array(Math.max(16, chunkSize));
+        this.buffer = new Uint8Array(chunkSize);
         this.view = new DataView(this.buffer.buffer);
     }
 
@@ -450,19 +450,66 @@ function pushElementContent(tokens: EmitToken[], el: SizedElement, emitter: Emit
 /** Receives encoded chunks in order; see {@link encodeDataSetTo}. */
 export type WriteSink = (chunk: Uint8Array) => void;
 
-/** A sized encoding plan: the two-pass design's first pass, reusable. */
-interface EncodePlan {
+/** Smallest usable chunk: every atomic write (tag, 32-bit length) must fit. */
+const MIN_CHUNK_SIZE = 16;
+
+/** Validates a caller's chunk size — honoured exactly, never silently clamped. */
+function resolveChunkSize(chunkSize: number | undefined): number {
+    if (chunkSize === undefined) {
+        return DEFAULT_CHUNK_SIZE;
+    }
+    if (!Number.isInteger(chunkSize) || chunkSize < MIN_CHUNK_SIZE) {
+        throw new DicomError('invalid-argument', `chunkSize must be an integer of at least ${MIN_CHUNK_SIZE}, got ${chunkSize}`);
+    }
+    return chunkSize;
+}
+
+/**
+ * A sized encoding, ready to emit: the two-pass design's first pass, captured
+ * so it is not repeated. Opaque apart from {@link EncodePlan.total}, and tied
+ * to the options it was created with — emit it, do not reuse it across
+ * different options or a mutated dataset.
+ */
+export interface EncodePlan {
+    /** @internal The sized element tree. */
     readonly sized: readonly SizedElement[];
+    /** @internal Whether the root encodes with explicit VR. */
     readonly explicitVr: boolean;
     /** Exact encoded size in bytes. */
     readonly total: number;
 }
 
-/** Runs the sizing pass (validating as it goes) without emitting anything. */
-function planEncode(dataSet: WriteDataSet, options: EncodeOptions): EncodePlan {
+/**
+ * Runs the sizing pass (validating as it goes) without emitting anything, so a
+ * caller can allocate exactly once and then emit without re-sizing (#41).
+ *
+ * @param dataSet - The elements to size, in ascending tag order
+ * @param options - VR mode, string charset and conformance gate
+ * @returns The plan, whose `total` is the encoded byte length
+ * @throws DicomError `invalid-argument` on unencodable input
+ */
+export function planEncode(dataSet: WriteDataSet, options: EncodeOptions = {}): EncodePlan {
     const explicitVr = options.explicitVr ?? true;
     const sized = normalize(dataSet.elements, explicitVr, { charset: options.charset ?? 'latin1', nonConformant: options.nonConformant === true });
     return { sized, explicitVr, total: sized.reduce((sum, el) => sum + el.totalSize, 0) };
+}
+
+/**
+ * Emits an existing {@link EncodePlan} into a caller-supplied buffer — the
+ * no-double-work form of {@link encodeDataSetInto}.
+ *
+ * @param plan - A plan from {@link planEncode}
+ * @param target - Destination buffer, with room for `plan.total` at `offset`
+ * @param offset - Where to start writing (default 0)
+ * @returns The number of bytes written (`plan.total`)
+ * @throws DicomError `invalid-argument` when the target is too small
+ */
+export function encodePlanInto(plan: EncodePlan, target: Uint8Array, offset = 0): number {
+    if (!Number.isInteger(offset) || offset < 0 || offset + plan.total > target.length) {
+        throw new DicomError('invalid-argument', `encodePlanInto: ${plan.total} bytes at offset ${offset} do not fit a ${target.length}-byte target`);
+    }
+    emitPlan(plan, new BufferEmitter(target, offset));
+    return plan.total;
 }
 
 /** Emits a plan through any {@link Emitter}, asserting exact byte accounting. */
@@ -520,12 +567,7 @@ export function encodeDataSet(dataSet: WriteDataSet, options: EncodeOptions = {}
  *         unencodable input
  */
 export function encodeDataSetInto(dataSet: WriteDataSet, target: Uint8Array, offset = 0, options: EncodeOptions = {}): number {
-    const plan = planEncode(dataSet, options);
-    if (!Number.isInteger(offset) || offset < 0 || offset + plan.total > target.length) {
-        throw new DicomError('invalid-argument', `encodeDataSetInto: ${plan.total} bytes at offset ${offset} do not fit a ${target.length}-byte target`);
-    }
-    emitPlan(plan, new BufferEmitter(target, offset));
-    return plan.total;
+    return encodePlanInto(planEncode(dataSet, options), target, offset);
 }
 
 /**
@@ -546,8 +588,9 @@ export function encodeDataSetInto(dataSet: WriteDataSet, target: Uint8Array, off
  * @throws DicomError `invalid-argument` on unencodable input
  */
 export function encodeDataSetTo(sink: WriteSink, dataSet: WriteDataSet, options: EncodeOptions = {}): number {
+    const chunkSize = resolveChunkSize(options.chunkSize);
     const plan = planEncode(dataSet, options);
-    const emitter = new SinkEmitter(sink, options.chunkSize ?? DEFAULT_CHUNK_SIZE);
+    const emitter = new SinkEmitter(sink, chunkSize);
     emitPlan(plan, emitter);
     emitter.flush();
     return plan.total;

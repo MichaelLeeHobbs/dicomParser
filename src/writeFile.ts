@@ -10,7 +10,7 @@ import { DicomError } from './errors';
 import type { ParseResult } from './parse';
 import { NATIVE_TRANSFER_SYNTAXES, TS_DEFLATED_LE, TS_EXPLICIT_BE, TS_EXPLICIT_LE, TS_GE_PRIVATE_DLX, TS_IMPLICIT_LE } from './parse';
 import { TAG_PIXEL_DATA, tagToString, toTag, type Tag, type TagLike } from './tag';
-import { encodeDataSet, encodeDataSetInto, encodeDataSetTo, encodedLength, type EncodeOptions, type WriteSink } from './writer';
+import { encodeDataSet, encodeDataSetTo, encodePlanInto, planEncode, type EncodeOptions, type WriteSink } from './writer';
 import { dataSet as buildDataSet, element, item, toWriteModel, type WriteDataSet, type WriteElement, type WriteItem } from './writeModel';
 
 /** Implementation Class UID for generated file meta groups (UUID-derived, 2.25 root). */
@@ -261,10 +261,11 @@ export function writeFile(options: WriteFileOptions): Uint8Array {
         return out;
     }
     // one allocation for the whole file: the dataset encodes straight into it,
-    // so the modify path no longer holds the dataset and the file at once (#41)
-    const encodeOptions = encodeOptionsFor(options, header.transferSyntax);
-    const out = new Uint8Array(header.dataSetPosition + encodedLength(options.dataSet, encodeOptions));
-    encodeDataSetInto(options.dataSet, out, writeFileHeader(out, header), encodeOptions);
+    // so the modify path no longer holds the dataset and the file at once (#41).
+    // The plan is reused, so the sizing pass runs once rather than per call.
+    const plan = planEncode(options.dataSet, encodeOptionsFor(options, header.transferSyntax));
+    const out = new Uint8Array(header.dataSetPosition + plan.total);
+    encodePlanInto(plan, out, writeFileHeader(out, header));
     return out;
 }
 
