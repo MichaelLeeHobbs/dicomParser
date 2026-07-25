@@ -11,6 +11,12 @@ from the `v2.0.0-rc.3` tag once the downstream soak passes.
 
 ### Added
 
+- `buildMetaGroup` knobs (#39): `MetaGroupOptions` with
+  `implementationClassUid` / `implementationVersionName` overrides,
+  `sourceApplicationEntityTitle` (0002,0016), and validated `extraElements`
+  (group-2 only, collision-checked) merged under a correct group length;
+  `writeFile` threads `options.meta` through — so a receiver writing FMI does
+  not have to hand-encode the meta group.
 - `toDicomJson` (#37): DICOM-JSON (PS3.18 Annex F) serializer — dataset →
   JSON Model with per-VR semantics: PN Alphabetic/Ideographic/Phonetic
   grouping, IS/DS numeric coercion (unparsable components stay strings),
