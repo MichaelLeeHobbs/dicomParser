@@ -115,7 +115,8 @@ function metaElements(identifiers: readonly [string, string, string], options: M
         seen.add(extra.tag);
         elements.push(extra);
     }
-    return elements.sort((a, b) => a.tag - b.tag);
+    // ascending order comes from buildDataSet(), which sorts every write model
+    return elements;
 }
 
 /**
