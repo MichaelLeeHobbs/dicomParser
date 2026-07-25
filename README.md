@@ -117,6 +117,7 @@ PS3.6 table (keyword ↔ tag ↔ VR ↔ VM) with overlay/curve repeating-group
 masking, and a drop-in `vrLookup`:
 
 ```ts
+import { parse } from '@ubercode/dicom-parser';
 import { dictionaryVrLookup, lookupKeyword, lookupTag } from '@ubercode/dicom-parser/dictionary';
 
 lookupTag('x00100010'); // { keyword: 'PatientName', vr: 'PN', vm: [1, 1], ... }
