@@ -24,6 +24,8 @@ while adopting rc.2 in `@ubercode/dcmtk` (dcmtk.js).
   path, so the head result reproduces the whole-file parse's ok/warnings/error
   exactly. Well-formed streams still fast-skip by hopping item headers (#67).
 
+## [2.0.0-rc.2] — 2026-07-24
+
 Post-rc.1 field-review follow-up: the bounded head-read API that unblocks the
 `@ubercode/dcmtk` (dcmtk.js) swap, plus the `/compat` surface it needs.
 
