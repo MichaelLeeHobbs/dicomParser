@@ -9,9 +9,9 @@ import { DicomDataSet } from './dataSet';
 import { DicomError } from './errors';
 import type { ParseResult } from './parse';
 import { NATIVE_TRANSFER_SYNTAXES, TS_DEFLATED_LE, TS_EXPLICIT_BE, TS_EXPLICIT_LE, TS_GE_PRIVATE_DLX, TS_IMPLICIT_LE } from './parse';
-import { TAG_PIXEL_DATA, tagToString, toTag, type TagLike } from './tag';
+import { TAG_PIXEL_DATA, tagToString, toTag, type Tag, type TagLike } from './tag';
 import { encodeDataSet, type EncodeOptions } from './writer';
-import { dataSet as buildDataSet, element, toWriteModel, type WriteDataSet, type WriteElement } from './writeModel';
+import { dataSet as buildDataSet, element, item, toWriteModel, type WriteDataSet, type WriteElement, type WriteItem } from './writeModel';
 
 /** Implementation Class UID for generated file meta groups (UUID-derived, 2.25 root). */
 export const IMPLEMENTATION_CLASS_UID = '2.25.331717632425659486778196813677143528292';
@@ -339,10 +339,124 @@ function headerLength(result: ParseResult): number {
 
 /** Edits for {@link modifyDataSet}. */
 export interface DataSetEdits {
-    /** Elements to add or replace (matched by tag). */
+    /** Elements to add or replace at the **root**, matched by exact tag. */
     readonly set?: readonly WriteElement[];
-    /** Tags to remove. */
+    /** **Root** tags to remove, matched exactly. */
     readonly remove?: readonly TagLike[];
+    /**
+     * Removes every element — at any depth — whose tag satisfies the predicate
+     * (#42). This is how range and class removal is expressed: the caller owns
+     * the rule, so no range type is needed, e.g. `isPrivateTag`, or
+     * `tag => (tagGroup(tag) & 0xff00) === 0x6000` for the overlay groups.
+     *
+     * @param tag - The element's tag
+     * @param path - Enclosing sequence tags, outermost first (empty at the root)
+     */
+    readonly removeWhere?: (tag: Tag, path: readonly Tag[]) => boolean;
+    /**
+     * Transforms every element at any depth (#42): return a replacement, the
+     * element unchanged, or `undefined` to remove it. Runs after
+     * {@link removeWhere}; a returned sequence is then walked, so a transform
+     * applies to the replacement's items rather than the original's.
+     *
+     * @param element - The element as it stands after the earlier edits
+     * @param path - Enclosing sequence tags, outermost first (empty at the root)
+     */
+    readonly mapElements?: (element: WriteElement, path: readonly Tag[]) => WriteElement | undefined;
+}
+
+/** Mutable state for one {@link modifyDataSet} walk. */
+interface EditState {
+    readonly removed: ReadonlySet<Tag>;
+    /** Root replacements, consumed as they match; the rest are appended. */
+    readonly replaced: Map<Tag, WriteElement>;
+    readonly edits: DataSetEdits;
+}
+
+/** A rebuilt sequence item, filled by the child tasks before the sequence closes. */
+interface EditItem {
+    readonly elements: WriteElement[];
+    readonly undefinedLength: boolean;
+}
+
+type EditTask =
+    | { readonly kind: 'element'; readonly el: WriteElement; readonly out: WriteElement[]; readonly path: readonly Tag[]; readonly root: boolean }
+    | { readonly kind: 'sequence'; readonly source: WriteElement; readonly items: readonly EditItem[]; readonly out: WriteElement[] };
+
+/** Where a run of elements is being rebuilt, and at what depth. */
+interface EditTarget {
+    readonly out: WriteElement[];
+    readonly path: readonly Tag[];
+    readonly root: boolean;
+}
+
+/** Pushes elements so the first one is processed first (the stack is LIFO). */
+function pushElements(tasks: EditTask[], elements: readonly WriteElement[], target: EditTarget): void {
+    for (let i = elements.length - 1; i >= 0; i--) {
+        tasks.push({ kind: 'element', el: elements[i] as WriteElement, out: target.out, path: target.path, root: target.root });
+    }
+}
+
+/**
+ * Applies the edits to one element: root-exact remove/set first (explicit
+ * caller intent wins), then the recursive predicate and transform.
+ * Returns `undefined` when the element is removed.
+ */
+function applyEdits(el: WriteElement, path: readonly Tag[], root: boolean, state: EditState): WriteElement | undefined {
+    let current = el;
+    if (root) {
+        if (state.removed.has(current.tag)) {
+            return undefined;
+        }
+        const replacement = state.replaced.get(current.tag);
+        if (replacement !== undefined) {
+            state.replaced.delete(current.tag);
+            current = replacement;
+        }
+    }
+    if (state.edits.removeWhere?.(current.tag, path) === true) {
+        return undefined;
+    }
+    if (state.edits.mapElements === undefined) {
+        return current;
+    }
+    return state.edits.mapElements(current, path);
+}
+
+/** Rebuilds a sequence element from its edited items once every child is done. */
+function closeSequence(task: Extract<EditTask, { kind: 'sequence' }>): void {
+    const items = task.items.map(edited => item(edited.elements, edited.undefinedLength));
+    task.out.push({ ...task.source, value: { kind: 'sequence', items } });
+}
+
+/** Walks the write model iteratively (no recursion), applying edits at every level. */
+function walkEdits(rootElements: readonly WriteElement[], state: EditState): WriteElement[] {
+    const out: WriteElement[] = [];
+    const tasks: EditTask[] = [];
+    pushElements(tasks, rootElements, { out, path: [], root: true });
+    while (tasks.length > 0) {
+        const task = tasks.pop() as EditTask;
+        if (task.kind === 'sequence') {
+            closeSequence(task);
+            continue;
+        }
+        const el = applyEdits(task.el, task.path, task.root, state);
+        if (el === undefined) {
+            continue;
+        }
+        if (el.value.kind !== 'sequence') {
+            task.out.push(el);
+            continue;
+        }
+        const sourceItems = el.value.items;
+        const items: EditItem[] = sourceItems.map(sourceItem => ({ elements: [], undefinedLength: sourceItem.undefinedLength ?? false }));
+        tasks.push({ kind: 'sequence', source: el, items, out: task.out });
+        const childPath = [...task.path, el.tag];
+        for (let i = sourceItems.length - 1; i >= 0; i--) {
+            pushElements(tasks, (sourceItems[i] as WriteItem).elements, { out: (items[i] as EditItem).elements, path: childPath, root: false });
+        }
+    }
+    return out;
 }
 
 /**
@@ -357,27 +471,25 @@ export interface DataSetEdits {
  * (and thus into {@link writeFile}) — check `result.ok`/`result.error`/
  * `result.stoppedAt` before editing if completeness matters.
  *
+ * `set`/`remove` are root-level and exact-tag; `removeWhere`/`mapElements`
+ * apply at every depth, including sequence items (#42), which is what real
+ * anonymization needs. Order per element: root remove, root set, then
+ * `removeWhere`, then `mapElements`. `set` elements that matched nothing are
+ * appended afterwards and deliberately bypass both hooks — an explicit
+ * addition is not something a general rule should then delete.
+ *
  * @param parsed - The parsed dataset
- * @param edits - Elements to set (add/replace) and tags to remove
+ * @param edits - Root set/remove plus the recursive predicate and transform
  * @returns The edited write model, in ascending tag order
  */
 export function modifyDataSet(parsed: DicomDataSet, edits: DataSetEdits): WriteDataSet {
-    const removed = new Set((edits.remove ?? []).map(tag => toTag(tag)));
-    const replaced = new Map((edits.set ?? []).map(el => [el.tag, el]));
-    const out: WriteElement[] = [];
-    for (const el of toWriteModel(parsed).elements) {
-        if (removed.has(el.tag)) {
-            continue;
-        }
-        const replacement = replaced.get(el.tag);
-        if (replacement !== undefined) {
-            out.push(replacement);
-            replaced.delete(el.tag);
-            continue;
-        }
-        out.push(el);
-    }
-    for (const el of replaced.values()) {
+    const state: EditState = {
+        removed: new Set((edits.remove ?? []).map(tag => toTag(tag))),
+        replaced: new Map((edits.set ?? []).map(el => [el.tag, el])),
+        edits,
+    };
+    const out = walkEdits(toWriteModel(parsed).elements, state);
+    for (const el of state.replaced.values()) {
         out.push(el);
     }
     return buildDataSet(out);
