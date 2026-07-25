@@ -110,6 +110,20 @@ if (outcome.outcome === 'needMoreBytes') {
 } // 'complete' → outcome.result is a normal ParseResult; 'malformed' → result.error
 ```
 
+### Tag dictionary (opt-in subpath)
+
+The core is dictionary-free; `@ubercode/dicom-parser/dictionary` ships the
+PS3.6 table (keyword ↔ tag ↔ VR ↔ VM) with overlay/curve repeating-group
+masking, and a drop-in `vrLookup`:
+
+```ts
+import { dictionaryVrLookup, lookupKeyword, lookupTag } from '@ubercode/dicom-parser/dictionary';
+
+lookupTag('x00100010'); // { keyword: 'PatientName', vr: 'PN', vm: [1, 1], ... }
+lookupKeyword('TransferSyntaxUID')?.tag; // 0x00020010
+parse(bytes, { vrLookup: dictionaryVrLookup }); // implicit VRs + CP-246 UN-as-SQ
+```
+
 ### Streaming ingest (push parser)
 
 `PushParser` accepts chunks as they arrive: root elements settle (and emit)

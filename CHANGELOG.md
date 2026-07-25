@@ -11,6 +11,14 @@ from the `v2.0.0-rc.3` tag once the downstream soak passes.
 
 ### Added
 
+- `@ubercode/dicom-parser/dictionary` (#36): the PS3.6 data dictionary (4,902
+  entries; derived from DCMTK's `dicom.dic`, OFFIS attribution in the generated
+  source) as an opt-in, tree-shakeable subpath — the core stays
+  dictionary-free. Ships `lookupTag` / `lookupKeyword` (keyword ↔ tag ↔ VR ↔
+  VM, retired flags) and `dictionaryVrLookup`, a drop-in
+  `ParseOptions.vrLookup` that supplies VRs for implicit streams and unlocks
+  CP-246 `UN`-as-sequence parsing. Repeating groups (overlays `60xx`, retired
+  curves `50xx`) are masked on lookup per PS3.6 §7.6.
 - `stopAt` resolved-tag sets (#35): `stopAt: { tags: [...] }` stops parsing at
   the first root element proving every listed tag answered (parsed) or provably
   absent (a greater root tag read; stream-ordered per PS3.5). Bounds header
