@@ -246,6 +246,18 @@ describe('readFrameIndexAsync — native frames', () => {
         expect(resolved.warnings.map(w => w.code)).toContain('length-adjusted');
     });
 
+    it('refuses out-of-range image dimensions instead of mis-sizing frames (review)', async () => {
+        // every field is a US, so the worst-case product (65535^4 bits) exceeds
+        // the safe-integer range; the bigint sizing must refuse it, not round it
+        const file = p10(TS.explicitLE, [
+            ...imageDescription({ rows: 65535, columns: 65535, bits: 65535, frames: 2, samples: 65535 }),
+            explicitEl('7FE00010', 'OW', new Uint8Array(16)),
+        ]);
+        const index = await readFrameIndexAsync(memReader(file));
+        expect(index.kind).toBe('unavailable');
+        expect(index.kind === 'unavailable' && index.reason).toMatch(/out of range/);
+    });
+
     it('reports unavailable for bit-packed frames that are not byte-aligned', async () => {
         const file = p10(TS.explicitLE, [...imageDescription({ rows: 3, columns: 3, bits: 1, frames: 2 }), explicitEl('7FE00010', 'OW', new Uint8Array(4))]);
         const index = await readFrameIndexAsync(memReader(file));
@@ -291,6 +303,25 @@ describe('readFrameIndexAsync — IO, reuse and unavailability', () => {
         const resolved = expectResolved(await readFrameIndexAsync(reader, { head }));
         expect(resolved.head).toBe(head);
         expect(reader.totalRead - before).toBeLessThan(200); // tables only, no second walk
+    });
+
+    it('validates reader.size even when a head read is supplied (review)', async () => {
+        const file = p10(TS.jpegBaseline, [...imageDescription({ rows: 4, columns: 4, bits: 8, frames: 1 }), encapsulated([0], [frag('a', 16)])]);
+        const head = await parseHeadAsync(memReader(file));
+        const bad: RangeReader = { size: -1, read: () => new Uint8Array(0) };
+        await expect(readFrameIndexAsync(bad, { head })).rejects.toThrow(/non-negative integer/);
+    });
+
+    it('ignores an Extended Offset Table whose length is not a whole number of entries (review)', async () => {
+        const truncated = ovBytes([0, 8 + 16]).subarray(0, 12); // 1.5 entries
+        const file = p10(TS.jpegBaseline, [
+            explicitEl('7FE00001', 'OV', truncated),
+            explicitEl('7FE00002', 'OV', ovBytes([16, 24])),
+            ...imageDescription({ rows: 4, columns: 4, bits: 8, frames: 2 }),
+            encapsulated([0, 8 + 16], [frag('a', 16), frag('b', 24)]),
+        ]);
+        const resolved = expectResolved(await readFrameIndexAsync(memReader(file)));
+        expect(resolved.frameSource).toBe('basic-offset-table');
     });
 
     it('reports unavailable for deflated objects (offsets would be inflated coordinates)', async () => {

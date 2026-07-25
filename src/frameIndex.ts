@@ -195,8 +195,13 @@ function frameCount(dataSet: DicomDataSet): number {
     return declared === undefined || !Number.isFinite(declared) || declared < 1 ? 1 : declared;
 }
 
-/** Native frames: equal-sized, contiguous, computed from the image-pixel module. */
-function nativeFrames(dataSet: DicomDataSet, pixelData: BulkRange, warnings: ParseWarning[]): Resolved {
+/**
+ * Bytes per native frame from the image-pixel module, or why it is unusable.
+ * The product is computed in `bigint`: hostile Rows/Columns/SamplesPerPixel/
+ * BitsAllocated can exceed the safe-integer range, where number arithmetic
+ * would silently mis-size frames instead of refusing.
+ */
+function nativeFrameLength(dataSet: DicomDataSet): { readonly frameLength: number } | { readonly reason: string } {
     const rows = dataSet.uint16(0x00280010);
     const columns = dataSet.uint16(0x00280011);
     const bitsAllocated = dataSet.uint16(0x00280100);
@@ -204,12 +209,26 @@ function nativeFrames(dataSet: DicomDataSet, pixelData: BulkRange, warnings: Par
     if (rows === undefined || columns === undefined || bitsAllocated === undefined) {
         return { reason: 'native pixel data needs Rows (0028,0010), Columns (0028,0011) and BitsAllocated (0028,0100) to size frames' };
     }
-    const bits = rows * columns * samples * bitsAllocated;
-    if (bits <= 0 || bits % 8 !== 0) {
+    const bits = BigInt(rows) * BigInt(columns) * BigInt(samples) * BigInt(bitsAllocated);
+    if (bits <= 0n || bits > BigInt(Number.MAX_SAFE_INTEGER)) {
+        return {
+            reason: `frame size ${bits} bits is out of range for Rows ${rows} × Columns ${columns} × Samples ${samples} × BitsAllocated ${bitsAllocated}`,
+        };
+    }
+    if (bits % 8n !== 0n) {
         // bit-packed (BitsAllocated 1) frames need not start on a byte boundary
         return { reason: `frame size ${bits} bits is not a whole number of bytes (bit-packed pixel data has no byte-aligned frame offsets)` };
     }
-    const frameLength = bits / 8;
+    return { frameLength: Number(bits / 8n) };
+}
+
+/** Native frames: equal-sized and contiguous, sized by {@link nativeFrameLength}. */
+function nativeFrames(dataSet: DicomDataSet, pixelData: BulkRange, warnings: ParseWarning[]): Resolved {
+    const sized = nativeFrameLength(dataSet);
+    if ('reason' in sized) {
+        return sized;
+    }
+    const { frameLength } = sized;
     let count = frameCount(dataSet);
     if (frameLength * count > pixelData.length) {
         warnings.push({
@@ -272,6 +291,9 @@ function rangesFromStarts(starts: readonly number[], layout: Layout): FrameRange
 async function readOv(reader: CountingReader, head: HeadResult, tag: Tag): Promise<number[] | undefined> {
     const kept = head.dataSet.element(tag);
     if (kept !== undefined && kept.kind === 'value') {
+        if (kept.length % 8 !== 0) {
+            return undefined; // not a whole number of 64-bit entries: malformed table
+        }
         const out: number[] = [];
         for (let i = 0; i * 8 < kept.length; i++) {
             const value = head.dataSet.uint64(tag, i);
@@ -287,6 +309,9 @@ async function readOv(reader: CountingReader, head: HeadResult, tag: Tag): Promi
 }
 
 function decodeOv(bytes: Uint8Array): number[] | undefined {
+    if (bytes.length % 8 !== 0) {
+        return undefined; // truncated or padded table: fall back rather than trim it
+    }
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const out: number[] = [];
     for (let at = 0; at + 8 <= bytes.length; at += 8) {
@@ -414,6 +439,14 @@ async function encapsulatedFrames(ctx: EncapsulatedContext): Promise<Resolved> {
     return walkFrames(ctx.reader, layout, numberOfFrames);
 }
 
+/** Why no file-absolute pixel-data range was available from the head read. */
+function missingPixelDataReason(head: HeadResult): string {
+    if (head.transferSyntax === '' || head.dataSet.element(TAG_PIXEL_DATA) === undefined) {
+        return 'the object has no pixel data';
+    }
+    return 'pixel data was not resolved as a file-absolute bulk range (deflated transfer syntax or malformed encapsulation); parse the object instead';
+}
+
 /**
  * Resolves the PixelData extent and per-frame ranges over a
  * {@link RangeReader}, reading only the header, the offset tables and (as a
@@ -430,17 +463,18 @@ async function encapsulatedFrames(ctx: EncapsulatedContext): Promise<Resolved> {
  * @throws DicomError `invalid-argument` when the reader size is negative
  */
 export async function readFrameIndexAsync(reader: RangeReader, options: FrameIndexOptions = {}): Promise<FrameIndex> {
+    // validated here, not only inside parseHeadAsync: a supplied options.head
+    // skips that call, and a bad size would otherwise degrade to empty reads
+    if (!Number.isInteger(reader.size) || reader.size < 0) {
+        throw new DicomError('invalid-argument', `readFrameIndexAsync: reader.size must be a non-negative integer, got ${reader.size}`);
+    }
     const counting = new CountingReader(reader);
     const head = options.head ?? (await parseHeadAsync(reader, options));
     const warnings: ParseWarning[] = [];
     const pixelData = head.bulk.get(TAG_PIXEL_DATA);
     const common = (): FrameIndexCommon => ({ head, bytesRead: head.bytesRead + counting.bytesRead, warnings });
     if (pixelData === undefined) {
-        const reason =
-            head.transferSyntax === '' || head.dataSet.element(TAG_PIXEL_DATA) === undefined
-                ? 'the object has no pixel data'
-                : 'pixel data was not resolved as a file-absolute bulk range (deflated transfer syntax or malformed encapsulation); parse the object instead';
-        return { ...common(), kind: 'unavailable', pixelData: undefined, reason };
+        return { ...common(), kind: 'unavailable', pixelData: undefined, reason: missingPixelDataReason(head) };
     }
     const resolved =
         pixelData.encapsulated === true
