@@ -6,7 +6,18 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ## [Unreleased]
 
-## [2.0.0-rc.2] — 2026-07-24
+### Fixed
+
+- `parseHeadAsync` no longer breaks head/full identity on malformed encapsulated
+  PixelData. The fragment hop was lenient — it treated an undefined-length
+  (`0xFFFFFFFF`) fragment item as length 0 and kept scanning, accepted any tag as
+  a fragment, and clamped a truncated chain to EOF in silence — so `HeadResult.ok`
+  could be `true` for a file `parse()` rejects. The hop is now a strict recognizer
+  of the exact no-warning happy path (a `FFFE,E000` basic offset table that is a
+  multiple of 4, defined-length `FFFE,E000` fragments within bound, a zero-length
+  `FFFE,E0DD` terminator); anything else falls back to the tokenizer-backed copy
+  path, so the head result reproduces the whole-file parse's ok/warnings/error
+  exactly. Well-formed streams still fast-skip by hopping item headers (#67).
 
 Post-rc.1 field-review follow-up: the bounded head-read API that unblocks the
 `@ubercode/dcmtk` (dcmtk.js) swap, plus the `/compat` surface it needs.

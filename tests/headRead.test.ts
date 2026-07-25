@@ -22,6 +22,7 @@ import {
     sqExplicitUndefined,
     tagBytes,
     TS,
+    uint32Bytes,
 } from './helpers/p10';
 
 // Bounded head-read differential (fork #59): for every fixture and synthetic
@@ -354,6 +355,77 @@ describe('parseHeadAsync — edge cases, options, and fallbacks', () => {
         const head = await parseHeadAsync(memReader(file));
         assertMatchesFull(head, file, 'dup-root-tag');
         expect(head.bulk.has(0x7fe00010), 'pixel data skipped despite duplicate root tag').toBe(true);
+    });
+});
+
+describe('parseHeadAsync — malformed encapsulated fragment streams (#67)', () => {
+    // 7FE0,0010 OB, undefined length (encapsulated) header.
+    const encHead = concat([tagBytes('7FE00010'), latin1('OB'), new Uint8Array(2), Uint8Array.from([0xff, 0xff, 0xff, 0xff])]);
+    const itemHeader = (tag: string, length: number): Uint8Array => concat([tagBytes(tag), uint32Bytes(length, false)]);
+    const emptyBot = item(new Uint8Array(0)); // FFFE,E000 length 0 (empty basic offset table)
+    const frag = item(latin1('PIXELDAT')); // one 8-byte fragment
+    const seqDelim = concat([tagBytes('FFFEE0DD'), new Uint8Array(4)]);
+    const wrap = (...parts: Uint8Array[]): Uint8Array => p10(TS.jpegBaseline, [explicitEl('00080060', 'CS', latin1('CT')), concat([encHead, ...parts])]);
+
+    // Each stream must yield the SAME ok / warnings / dataset as a whole-file
+    // parse. Before the strict-hop fix the lenient hop accepted bytes parse()
+    // rejects, so head.ok could be true where full.ok is false (identity break).
+
+    it('undefined-length fragment item — parse throws, head must too (primary repro)', async () => {
+        const file = wrap(emptyBot, itemHeader('FFFEE000', 0xffffffff), new Uint8Array(600));
+        expect(parse(file).ok, 'full parse rejects the undefined-length fragment').toBe(false);
+        const head = await parseHeadAsync(memReader(file));
+        assertMatchesFull(head, file, 'undef-length-fragment');
+        expect(head.bulk.has(0x7fe00010), 'fell back, not skipped').toBe(false);
+    });
+
+    it('missing sequence delimiter (chain runs to EOF)', async () => {
+        const head = await parseHeadAsync(memReader(wrap(emptyBot, frag)));
+        assertMatchesFull(head, wrap(emptyBot, frag), 'missing-delim');
+        expect(head.bulk.has(0x7fe00010)).toBe(false);
+    });
+
+    it('closed by an item delimiter (FFFE,E00D) instead of FFFE,E0DD', async () => {
+        const file = wrap(emptyBot, frag, concat([tagBytes('FFFEE00D'), new Uint8Array(4)]));
+        const head = await parseHeadAsync(memReader(file));
+        assertMatchesFull(head, file, 'wrong-delim');
+        expect(head.bulk.has(0x7fe00010)).toBe(false);
+    });
+
+    it('garbage (non-FFFE) tag where a fragment item is expected', async () => {
+        const file = wrap(emptyBot, frag, itemHeader('00080000', 0), seqDelim);
+        const head = await parseHeadAsync(memReader(file));
+        assertMatchesFull(head, file, 'garbage-tag');
+        expect(head.bulk.has(0x7fe00010)).toBe(false);
+    });
+
+    it('non-zero-length sequence delimiter', async () => {
+        const file = wrap(emptyBot, frag, itemHeader('FFFEE0DD', 4), new Uint8Array(4));
+        const head = await parseHeadAsync(memReader(file));
+        assertMatchesFull(head, file, 'nonzero-delim');
+        expect(head.bulk.has(0x7fe00010)).toBe(false);
+    });
+
+    it('basic offset table length not a multiple of 4', async () => {
+        const file = wrap(item(new Uint8Array(6)), frag, seqDelim);
+        const head = await parseHeadAsync(memReader(file));
+        assertMatchesFull(head, file, 'bot-not-mult4');
+        expect(head.bulk.has(0x7fe00010)).toBe(false);
+    });
+
+    it('over-long fragment length (exceeds remaining bytes)', async () => {
+        const file = wrap(emptyBot, itemHeader('FFFEE000', 0x1000), latin1('AB'), seqDelim);
+        const head = await parseHeadAsync(memReader(file));
+        assertMatchesFull(head, file, 'overlong-fragment');
+        expect(head.bulk.has(0x7fe00010)).toBe(false);
+    });
+
+    it('still fast-skips a well-formed multi-fragment stream (no regression)', async () => {
+        const file = wrap(item(uint32Bytes(0, false)), frag, item(latin1('MOREPXLS')), seqDelim);
+        const head = await parseHeadAsync(memReader(file));
+        assertMatchesFull(head, file, 'wellformed-multifrag');
+        expect(head.bulk.has(0x7fe00010), 'skipped, not copied').toBe(true);
+        expect(head.bulk.get(0x7fe00010)?.encapsulated).toBe(true);
     });
 });
 

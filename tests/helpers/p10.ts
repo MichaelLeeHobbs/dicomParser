@@ -37,7 +37,7 @@ function uint16Bytes(value: number, bigEndian: boolean): Uint8Array {
     return bytes;
 }
 
-function uint32Bytes(value: number, bigEndian: boolean): Uint8Array {
+export function uint32Bytes(value: number, bigEndian: boolean): Uint8Array {
     const bytes = new Uint8Array(4);
     new DataView(bytes.buffer).setUint32(0, value, !bigEndian);
     return bytes;
