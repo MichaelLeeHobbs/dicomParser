@@ -25,7 +25,7 @@ import { DicomError, type ParseWarning } from './errors';
 import { readExplicitElementHeader, readImplicitElementHeader, type ElementHeader, type VrLookup } from './elementHeader';
 import { NATIVE_TRANSFER_SYNTAXES, parse, TS_DEFLATED_LE, TS_EXPLICIT_BE, TS_GE_PRIVATE_DLX, TS_IMPLICIT_LE } from './parse';
 import { readPart10Header } from './part10';
-import { TAG_PIXEL_DATA, TAG_SEQUENCE_DELIMITATION, tagToString, toTag, UNDEFINED_LENGTH, type Tag } from './tag';
+import { TAG_ITEM, TAG_PIXEL_DATA, TAG_SEQUENCE_DELIMITATION, tagToString, toTag, UNDEFINED_LENGTH, type Tag } from './tag';
 import { readElements, type ReadElementsResult, type StopAtOption } from './tokenizer';
 
 /** Value representations whose defined-length value bytes are skippable bulk. */
@@ -328,22 +328,64 @@ function measureFirst(buf: Uint8Array, walk: Walk): number | undefined {
     return errBefore ? undefined : extent;
 }
 
-/** Skips encapsulated PixelData by hopping fragment item-headers (8 bytes each). */
+/** Reads an 8-byte encapsulation item header (tag + length) at `at`. */
+async function readItemHeader(source: Source, at: number): Promise<{ tag: number; length: number }> {
+    const b = await source.read(at, 8);
+    const view = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    return { tag: view.getUint16(0, true) * 0x10000 + view.getUint16(2, true), length: view.getUint32(4, true) };
+}
+
+/**
+ * True when an encapsulation item is a happy-path `FFFE,E000` value — the basic
+ * offset table or a fragment — with a defined length fully inside the bound. The
+ * basic offset table (`isBot`) additionally must be a multiple of 4, or the
+ * tokenizer emits a `length-adjusted` warning we would otherwise drop.
+ */
+function isCleanItem(tag: number, length: number, available: number, isBot: boolean): boolean {
+    if (tag !== TAG_ITEM || length === UNDEFINED_LENGTH || length > available) return false;
+    return !isBot || length % 4 === 0;
+}
+
+/**
+ * Fast path for well-formed encapsulated PixelData: hops 8-byte item headers
+ * (never fragment bodies) and returns the value's end offset only when the chain
+ * is exactly what the tokenizer accepts without any warning — a `FFFE,E000` basic
+ * offset table, zero or more `FFFE,E000` fragments (all defined-length, inside the
+ * bound), closed by a zero-length `FFFE,E0DD`. Returns `undefined` for anything
+ * the tokenizer would reject (e.g. an undefined-length fragment item) or merely
+ * tolerate-with-a-warning (missing/wrong/non-zero delimiter, over-long fragment,
+ * garbage tag, truncation), so the caller falls back to the tokenizer-backed copy
+ * path and head/full identity holds by construction (#67).
+ */
+async function tryHopEncapsulated(walk: Walk, dataOffset: number): Promise<number | undefined> {
+    const bound = walk.source.size;
+    let at = dataOffset;
+    let bot = true; // the first item is the basic offset table
+    for (;;) {
+        if (at + 8 > bound) return undefined; // ran out before a FFFE,E0DD terminator
+        const { tag, length } = await readItemHeader(walk.source, at);
+        if (!bot && tag === TAG_SEQUENCE_DELIMITATION) return length === 0 ? at + 8 : undefined;
+        if (!isCleanItem(tag, length, bound - (at + 8), bot)) return undefined;
+        at += 8 + length;
+        bot = false;
+    }
+}
+
+/**
+ * Skips well-formed encapsulated PixelData by hopping item headers; for any
+ * malformed chain, falls back to {@link copyUndefined} so the real tokenizer
+ * measures and copies it — reproducing the whole-file parse's ok/warnings/error
+ * exactly rather than silently accepting bytes `parse` rejects (#67).
+ */
 async function skipEncapsulated(walk: Walk, header: ElementHeader): Promise<void> {
     const dataOffset = walk.offset + header.dataOffset;
-    let at = dataOffset;
-    while (at + 8 <= walk.source.size) {
-        const itemHeader = await walk.source.read(at, 8);
-        const view = new DataView(itemHeader.buffer, itemHeader.byteOffset, itemHeader.byteLength);
-        const tag = view.getUint16(0, true) * 0x10000 + view.getUint16(2, true);
-        const length = view.getUint32(4, true);
-        at += 8;
-        if (tag === TAG_SEQUENCE_DELIMITATION) break;
-        at += length === UNDEFINED_LENGTH ? 0 : length;
+    const end = await tryHopEncapsulated(walk, dataOffset);
+    if (end === undefined) {
+        await copyUndefined(walk);
+        return;
     }
-    at = Math.min(at, walk.source.size);
-    walk.bulk.set(header.tag, { offset: dataOffset, length: at - dataOffset, encapsulated: true, ...(header.vr === undefined ? {} : { vr: header.vr }) });
-    walk.offset = at;
+    walk.bulk.set(header.tag, { offset: dataOffset, length: end - dataOffset, encapsulated: true, ...(header.vr === undefined ? {} : { vr: header.vr }) });
+    walk.offset = end;
 }
 
 /** Dispatches one element: skip bulk, hop encapsulated, or copy metadata. */
