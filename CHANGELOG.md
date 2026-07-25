@@ -11,6 +11,16 @@ from the `v2.0.0-rc.3` tag once the downstream soak passes.
 
 ### Added
 
+- `toDicomJson` (#37): DICOM-JSON (PS3.18 Annex F) serializer — dataset →
+  JSON Model with per-VR semantics: PN Alphabetic/Ideographic/Phonetic
+  grouping, IS/DS numeric coercion (unparsable components stay strings),
+  `null` for empty values inside multi-valued attributes, `Value` omitted for
+  empty attributes, iterative SQ nesting, AT as 8-hex strings, SV/UV numbers
+  within 2^53 (decimal strings beyond), and binary VRs as `BulkDataURI` (via a
+  caller callback) or dependency-free base64 `InlineBinary`. Pairs with
+  `/dictionary`'s `dictionaryVrLookup` for implicit streams; strings decode
+  through the dataset's charset contexts. (Reverse direction deferred — the
+  writer's build model covers construction.)
 - `@ubercode/dicom-parser/dictionary` (#36): the PS3.6 data dictionary (4,902
   entries; derived from DCMTK's `dicom.dic`, OFFIS attribution in the generated
   source) as an opt-in, tree-shakeable subpath — the core stays
