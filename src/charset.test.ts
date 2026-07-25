@@ -10,6 +10,8 @@ import {
     type CharsetContext,
 } from './charset';
 import { DicomError } from './errors';
+import { parse } from './parse';
+import { TS, concat, evenPad, explicitEl, latin1, p10 } from '../tests/helpers/p10';
 
 // Ported from @ubercode/dcmtk _charset.test.ts (PS3.5 Annex H/I/J vectors),
 // adapted to this repo's typed-error model (throws DicomError instead of
@@ -230,6 +232,35 @@ describe('decodeDicomText — ISO 2022 code extensions', () => {
         // DCMTK resets at the delimiter for single-byte charsets, so the same GR
         // bytes in value 2 decode as the default (Latin-1), not Cyrillic.
         expect(decode('ISO 2022 IR 6\\ISO 2022 IR 144', '\x1b-L\xbb\xee\xda\\\xbb\xee\xda')).toBe('Люк\\»îÚ');
+    });
+
+    it('threads the VR through the accessor path: PN and LO decode the same bytes differently (#56)', () => {
+        const value = concat([latin1('\x1b-L\xbb\xee\xda^\xbb\xee\xda'), latin1(' ')]);
+        const file = p10(TS.explicitLE, [
+            explicitEl('00080005', 'CS', evenPad('ISO 2022 IR 6\\ISO 2022 IR 144')),
+            explicitEl('00100010', 'PN', value),
+            explicitEl('00102160', 'LO', value),
+        ]);
+        const result = parse(file);
+        expect(result.dataSet.string('x00100010')).toBe('Люк^»îÚ');
+        expect(result.dataSet.string('x00102160')).toBe('Люк^Люк');
+    });
+
+    it('resets at PN component delimiters ^ and = only when the VR is PN (#56)', () => {
+        const bytes = '\x1b-L\xbb\xee\xda^\xbb\xee\xda=\xbb\xee\xda';
+        // PN: DCMTK resets single-byte designations at ^ and = too — the
+        // leaked Cyrillic G1 does not survive into later components
+        expect(decodeDicomText(latin1Bytes(bytes), ctx('ISO 2022 IR 6\\ISO 2022 IR 144'), 'PN')).toBe('Люк^»îÚ=»îÚ');
+        // non-PN VRs: ^ and = are ordinary characters; the designation persists
+        expect(decodeDicomText(latin1Bytes(bytes), ctx('ISO 2022 IR 6\\ISO 2022 IR 144'), 'LO')).toBe('Люк^Люк=Люк');
+        expect(decodeDicomText(latin1Bytes(bytes), ctx('ISO 2022 IR 6\\ISO 2022 IR 144'))).toBe('Люк^Люк=Люк');
+    });
+
+    it('does not reset at PN delimiters while a multi-byte G0 set is active (#56, matches DCMTK)', () => {
+        // 0x5E under JIS X 0208 is a kanji byte — the multi-byte guard applies
+        // to the PN delimiters exactly as it does to the backslash
+        const decoded = decodeDicomText(latin1Bytes('\x1b$B;3^D'), ctx('ISO 2022 IR 6\\ISO 2022 IR 87'), 'PN');
+        expect(decoded).not.toContain('^');
     });
 
     it('does not reset at a delimiter while a multi-byte G0 set is active (matches DCMTK)', () => {

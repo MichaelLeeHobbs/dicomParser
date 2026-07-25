@@ -294,10 +294,15 @@ function decodeMixed(bytes: Uint8Array, g0: SegmentDecoder, g1: SegmentDecoder |
 
 /**
  * Value/line delimiters at which the ISO 2022 designations reset to the initial
- * state: HT, LF, FF, CR, and the multi-value backslash. (`^`/`=` are PN-specific
- * and need the VR, so they are not reset here.)
+ * state: HT, LF, FF, CR, and the multi-value backslash. PN values additionally
+ * reset at `^` (component) and `=` (component group) — see
+ * {@link PN_RESET_DELIMITERS}, selected by the VR passed to
+ * {@link decodeDicomText} (#56, DCMTK `checkDelimiters` parity).
  */
 const RESET_DELIMITERS: ReadonlySet<number> = new Set([0x09, 0x0a, 0x0c, 0x0d, 0x5c]);
+
+/** {@link RESET_DELIMITERS} plus the PN-specific `^` and `=` (#56). */
+const PN_RESET_DELIMITERS: ReadonlySet<number> = new Set([...RESET_DELIMITERS, 0x5e, 0x3d]);
 
 /**
  * Whether a decoder replaces the G0/ASCII code area with a multi-byte set (JIS X
@@ -319,7 +324,7 @@ function isMultiByteG0(decoder: SegmentDecoder): boolean {
  * C.12.1.1.2; matches DCMTK's `checkDelimiters`). This resets a leaked single-byte
  * G1 designation across a non-conformant delimiter that omitted the reset escape.
  */
-function decodeIso2022(bytes: Uint8Array, initialG0: SegmentDecoder, initialG1: SegmentDecoder | undefined): string {
+function decodeIso2022(bytes: Uint8Array, initialG0: SegmentDecoder, initialG1: SegmentDecoder | undefined, resets: ReadonlySet<number>): string {
     let out = '';
     let g0 = initialG0;
     let g1 = initialG1;
@@ -340,7 +345,7 @@ function decodeIso2022(bytes: Uint8Array, initialG0: SegmentDecoder, initialG1: 
             }
             i += esc.length;
             segStart = i;
-        } else if (RESET_DELIMITERS.has(byte) && !isMultiByteG0(g0)) {
+        } else if (resets.has(byte) && !isMultiByteG0(g0)) {
             out += decodeMixed(bytes.subarray(segStart, i), g0, g1);
             out += String.fromCharCode(byte);
             g0 = initialG0;
@@ -501,11 +506,15 @@ export function resolveCharsetContext(specificCharacterSet: string | undefined, 
  *
  * @param bytes - The raw value bytes
  * @param context - The context from {@link resolveCharsetContext}
+ * @param vr - The element's VR when known; `'PN'` adds `^`/`=` to the ISO 2022
+ *             designation-reset delimiters (#56, DCMTK parity). Only affects
+ *             single-byte code extensions — multi-byte G0 sets already
+ *             suppress delimiter checking.
  * @returns The decoded string
  */
-export function decodeDicomText(bytes: Uint8Array, context: CharsetContext): string {
+export function decodeDicomText(bytes: Uint8Array, context: CharsetContext, vr?: string): string {
     if (context.iso2022) {
-        return decodeIso2022(bytes, context.initial, context.initialG1);
+        return decodeIso2022(bytes, context.initial, context.initialG1, vr === 'PN' ? PN_RESET_DELIMITERS : RESET_DELIMITERS);
     }
     return decodeSegment(bytes, context.initial);
 }
