@@ -83,6 +83,12 @@ export class DicomDataSet {
      * Returns a zero-copy view of an element's value bytes (upstream #146:
      * raw bytes are always reachable alongside decoded values).
      *
+     * **View-retention semantics (#40):** the returned `Uint8Array` is a
+     * `subarray` view over the dataset's whole parsed buffer
+     * ({@link DicomDataSet.bytes}) — holding it keeps the entire allocation
+     * (for a CT, the pixel data too) reachable. Use {@link rawBytesCopy} for a
+     * value that must outlive the buffer.
+     *
      * @param tag - The element's tag
      * @returns The value bytes, or `undefined` when the element is absent or
      *          not a readable kind (sequences, encapsulated pixel data)
@@ -93,6 +99,21 @@ export class DicomDataSet {
             return undefined;
         }
         return this.bytes.subarray(element.dataOffset, element.dataOffset + element.length);
+    }
+
+    /**
+     * Like {@link rawBytes}, but returns a fresh copy that does **not** retain
+     * the parsed buffer (#40) — the explicit detach operation: copy the values
+     * you need, then drop the `ParseResult`/dataset, and the whole Part-10
+     * allocation becomes collectable without ambiguity.
+     *
+     * @param tag - The element's tag
+     * @returns A freshly allocated copy of the value bytes, or `undefined`
+     *          when the element is absent or not a readable kind
+     */
+    rawBytesCopy(tag: TagLike): Uint8Array | undefined {
+        const view = this.rawBytes(tag);
+        return view === undefined ? undefined : Uint8Array.from(view);
     }
 
     private view(): DataView {

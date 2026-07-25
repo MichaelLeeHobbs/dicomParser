@@ -11,6 +11,10 @@ from the `v2.0.0-rc.3` tag once the downstream soak passes.
 
 ### Added
 
+- `DicomDataSet.rawBytesCopy` (#40): the explicit detach operation — a fresh
+  allocation of an element's value bytes that does not retain the parsed
+  buffer. `rawBytes`'s view-retention semantics are now documented explicitly
+  (holding a view keeps the whole Part-10 allocation reachable).
 - `buildMetaGroup` knobs (#39): `MetaGroupOptions` with
   `implementationClassUid` / `implementationVersionName` overrides,
   `sourceApplicationEntityTitle` (0002,0016), and validated `extraElements`
