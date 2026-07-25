@@ -19,7 +19,8 @@ from the `v2.0.0-rc.3` tag once the downstream soak passes.
   `{ tag, inclusive }` shape is unchanged (`StopAtOption` is now a union), and
   group bounds remain `{ tag: tag(group + 1, 0x0000) }`. Works through `parse`,
   `parsePartial`, and `PushParser`; `parseHeadAsync` keeps the single-tag shape
-  (it already skips bulk). Feed chunks
+  (it already skips bulk).
+- `PushParser`: a push/streaming parser for receive paths (#33). Feed chunks
   with `push(chunk)` and read incremental signals — root elements settle and
   emit exactly once (`onElement`), a `wanted` tag set resolves when each tag is
   settled or provably absent (stream ordering), and `beforePixelData` fires as

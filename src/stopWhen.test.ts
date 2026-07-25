@@ -73,8 +73,9 @@ describe('stopAt resolved-tag sets (#35)', () => {
         ]);
         const result = parse(file, { stopAt: { tags: ['x00100010'] } });
         expect(result.stoppedAt).toBe(0x00100010);
-        const element = result.dataSet.elements.get(0x00100010);
-        expect(element).toBeDefined();
+        expect(result.dataSet.string('x00100010')).toBe('FIRST');
+        // ...whereas the full parse keeps the last duplicate
+        expect(parse(file).dataSet.string('x00100010')).toBe('SECOND');
     });
 
     it('composes with parsePartial-style early availability through PushParser, chunked', () => {

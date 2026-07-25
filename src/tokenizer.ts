@@ -163,7 +163,11 @@ class Tokenizer {
     private readonly vrLookup: VrLookup | undefined;
     private readonly stopTag: Tag | undefined;
     private readonly stopInclusive: boolean;
-    /** Remaining unresolved tags of a {@link StopWhenResolvedOption}. */
+    /**
+     * Remaining unresolved tags of a {@link StopWhenResolvedOption}. The
+     * reference is fixed (`readonly`) but the set's contents shrink during the
+     * walk as tags are answered or proven absent (see `stopWhenResolved`).
+     */
     private readonly stopSet: Set<Tag> | undefined;
     private readonly maxDepth: number;
     private readonly maxElements: number;
