@@ -173,6 +173,17 @@ describe('PushParser — incremental signals', () => {
         expectResultsEqual(result, parse(COMPLEX_FILE, options));
         expect(emitted).toEqual([...parse(COMPLEX_FILE, options).dataSet.elements.keys()]);
     });
+
+    it('honors inclusive stopAt: only the trigger settles, exactly like parse', () => {
+        // without the stop latch, each later push would settle one more
+        // element past the trigger (they all compare ≥ the stop tag)
+        const options: ParseOptions = { stopAt: { tag: 0x00280010, inclusive: true } };
+        const emitted: number[] = [];
+        const parser = new PushParser({ ...options, onElement: e => emitted.push(e.tag) });
+        feed(parser, COMPLEX_FILE, () => 9);
+        expectResultsEqual(parser.end(), parse(COMPLEX_FILE, options));
+        expect(emitted).toEqual([...parse(COMPLEX_FILE, options).dataSet.elements.keys()]);
+    });
 });
 
 describe('PushParser — lifecycle and deflated', () => {
