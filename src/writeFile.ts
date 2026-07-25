@@ -393,10 +393,17 @@ interface EditTarget {
     readonly root: boolean;
 }
 
-/** Pushes elements so the first one is processed first (the stack is LIFO). */
+/**
+ * Pushes elements so the first one is processed first (the stack is LIFO),
+ * in ascending tag order. The source order is the *stream* order the parse
+ * saw — identical to tag order for a conformant file, but not for one whose
+ * elements are out of order — so it is sorted here to make the documented
+ * visit order hold for every input, not just well-formed ones.
+ */
 function pushElements(tasks: EditTask[], elements: readonly WriteElement[], target: EditTarget): void {
-    for (let i = elements.length - 1; i >= 0; i--) {
-        tasks.push({ kind: 'element', el: elements[i] as WriteElement, out: target.out, path: target.path, root: target.root });
+    const ordered = [...elements].sort((a, b) => a.tag - b.tag);
+    for (let i = ordered.length - 1; i >= 0; i--) {
+        tasks.push({ kind: 'element', el: ordered[i] as WriteElement, out: target.out, path: target.path, root: target.root });
     }
 }
 

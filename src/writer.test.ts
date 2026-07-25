@@ -333,6 +333,21 @@ describe('modifyDataSet — nested + predicate edits (#42)', () => {
         expect(paths).toEqual([['x00081110'], ['x00081110'], []]);
     });
 
+    it('visits elements in ascending tag order even when the file stores them out of order', () => {
+        // a non-conformant stream order: (0010,0010) precedes (0008,0060)
+        const raw = concat([explicitEl('00100010', 'PN', latin1('Doe^Jane')), explicitEl('00080060', 'CS', latin1('CT'))]);
+        const parsed = parse(raw, { transferSyntax: TS_EXPLICIT_LE });
+        expect([...parsed.dataSet.elements.keys()]).toEqual([0x00100010, 0x00080060]); // stream order
+        const seen: number[] = [];
+        modifyDataSet(parsed.dataSet, {
+            mapElements: el => {
+                seen.push(el.tag);
+                return el;
+            },
+        });
+        expect(seen).toEqual([0x00080060, 0x00100010]); // documented visit order holds
+    });
+
     it('mapElements returning undefined removes the element', () => {
         const parsed = parse(nestedFile());
         const edited = modifyDataSet(parsed.dataSet, { mapElements: el => (el.tag === 0x00081150 ? undefined : el) });
