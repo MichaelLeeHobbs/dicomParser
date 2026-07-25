@@ -62,6 +62,12 @@ if (pixelData?.kind === 'encapsulated') {
 Browser with deflated files (no zlib): `await parseAsync(bytes)` uses
 `DecompressionStream('deflate-raw')`.
 
+**Zero-copy views and detaching:** accessors like `rawBytes()` (and element
+offsets generally) are views over the one parsed buffer — holding a view keeps
+the whole allocation (pixel data included) reachable. To keep a value beyond
+the buffer's lifetime, `rawBytesCopy()` returns a fresh allocation; copy what
+you need, drop the `ParseResult`, and the Part-10 buffer becomes collectable.
+
 ### Metadata-only fast path
 
 ```ts

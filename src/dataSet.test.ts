@@ -224,4 +224,18 @@ describe('DicomDataSet rawBytes', () => {
         expect(dataSet.rawBytes('x22114433')).toBeUndefined();
         expect(dataSet.uint16('x22114433')).toBeUndefined();
     });
+
+    it('rawBytes retains the parsed buffer; rawBytesCopy detaches (#40)', () => {
+        const dataSet = le();
+        const view = dataSet.rawBytes('x22114436') as Uint8Array;
+        const copy = dataSet.rawBytesCopy('x22114436') as Uint8Array;
+        // the view shares the parsed allocation; the copy does not
+        expect(view.buffer).toBe(dataSet.bytes.buffer);
+        expect(copy.buffer).not.toBe(dataSet.bytes.buffer);
+        expect(Array.from(copy)).toEqual(Array.from(view));
+        // mutating the copy never touches the parsed bytes
+        copy[0] = 0xff;
+        expect(view[0]).toBe(0x31);
+        expect(dataSet.rawBytesCopy('x12345678')).toBeUndefined();
+    });
 });
