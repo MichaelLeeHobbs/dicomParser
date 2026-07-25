@@ -14,6 +14,8 @@ export { DicomError, isDicomError, type DicomErrorCode, type ParseWarning, type 
 export {
     TAG_ITEM,
     TAG_ITEM_DELIMITATION,
+    TAG_EXTENDED_OFFSET_TABLE,
+    TAG_EXTENDED_OFFSET_TABLE_LENGTHS,
     TAG_PIXEL_DATA,
     TAG_SEQUENCE_DELIMITATION,
     TAG_TRANSFER_SYNTAX_UID,
@@ -45,6 +47,7 @@ export {
 } from './tokenizer';
 export { readPart10Header, readUiString, type Part10Header, type Part10Options } from './part10';
 export { parseHeadAsync, type BulkRange, type HeadOptions, type HeadResult, type RangeReader } from './headRead';
+export { frameFragments, framePayload, readFrameIndexAsync, type FrameIndex, type FrameIndexOptions, type FrameRange, type FrameSource } from './frameIndex';
 export { PushParser, type PushOptions, type PushOutcome, type PushStatus } from './pushParser';
 export { toDicomJson, type DicomJsonAttribute, type DicomJsonModel, type DicomJsonOptions, type DicomJsonPersonName } from './dicomJson';
 export { inflateRaw, inflateRawAsync, hasSyncInflate, type InflateFn } from './inflate';
