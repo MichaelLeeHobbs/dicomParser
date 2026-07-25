@@ -1,15 +1,17 @@
-# Release runbook — 2.0.0-rc.2 → 2.0.0
+# Release runbook — 2.0.0-rc.3 → 2.0.0
 
 Phases 6-7 need steps that are deliberately manual (publishing, cross-repo changes,
 external soak). Everything below the "prepared" line is done; work the blockers top-down.
 
 ## Prepared (in-repo, done)
 
-- **`2.0.0-rc.1` and `2.0.0-rc.2` published** to npm under the `rc` dist-tag (with
+- **`2.0.0-rc.1`/`rc.2`/`rc.3` published** to npm under the `rc` dist-tag (with
   provenance); GitHub Releases created; npm Trusted Publishing configured; the
   `2.0.0-alpha.0` release deprecated. rc.2 adds the bounded head-read (`parseHeadAsync`,
-  #63), `BulkRange.vr`/`encapsulated` (#65), and `/compat` `readPart10Header` (#62).
-  `npm pack --dry-run` clean; ESM+CJS+DTS build with `/compat` subpath; `attw` clean.
+  #63), `BulkRange.vr`/`encapsulated` (#65), and `/compat` `readPart10Header` (#62);
+  rc.3 makes the encapsulated head-read fragment hop strict so it can't diverge from a
+  full parse on malformed fragment streams (#67). `npm pack --dry-run` clean; ESM+CJS+DTS
+  build with `/compat` subpath; `attw` clean.
 - All quality gates green in CI: the full unit/fixture suite plus the environment-gated
   corpus differential, `dcm2xml` oracle, `dcmdump` round-trip, and browser smoke suite (the
   CI `Test`/`Acceptance`/`Browser smoke` jobs); coverage ≥ thresholds; fuzz; byte-identical
