@@ -43,9 +43,12 @@ export interface EncodeOptions {
     readonly nonConformant?: boolean;
 }
 
-/** Resolved encoding settings threaded through normalization. */
+/**
+ * Resolved encoding settings shared by every element. VR mode is *not* here:
+ * it varies per frame (a UN sequence's content is implicit), so it is passed
+ * alongside, letting one context object serve the whole walk.
+ */
 interface EncodeContext {
-    readonly explicitVr: boolean;
     readonly charset: WriteCharset;
     readonly nonConformant: boolean;
 }
@@ -54,8 +57,8 @@ interface SizedElement {
     readonly tag: Tag;
     readonly vr: string | undefined;
     readonly undefinedLength: boolean;
-    /** Non-conformant override for the encoded length field (#43). */
-    readonly declaredLength?: number;
+    /** Non-conformant override for the encoded length field (#43); `undefined` normally. */
+    readonly declaredLength: number | undefined;
     readonly payload: SizedPayload;
     /** Value-field length (excluding header and trailing delimiter). */
     contentSize: number;
@@ -92,16 +95,16 @@ function encodePayloadBytes(el: WriteElement, charset: WriteCharset): Uint8Array
 }
 
 /** Builds the sized tree iteratively (explicit stack, no recursion). */
-function normalize(elements: readonly WriteElement[], context: EncodeContext): SizedElement[] {
+function normalize(elements: readonly WriteElement[], rootExplicitVr: boolean, context: EncodeContext): SizedElement[] {
     const out: SizedElement[] = [];
     const postOrder: (SizedElement | SizedItem)[] = [];
     const work: { readonly source: WriteElement; readonly target: SizedElement[]; readonly explicitVr: boolean }[] = [];
     for (let i = elements.length - 1; i >= 0; i--) {
-        work.push({ source: elements[i] as WriteElement, target: out, explicitVr: context.explicitVr });
+        work.push({ source: elements[i] as WriteElement, target: out, explicitVr: rootExplicitVr });
     }
     while (work.length > 0) {
         const { source, target, explicitVr: frameExplicit } = work.pop() as (typeof work)[number];
-        const sized = normalizeOne(source, { ...context, explicitVr: frameExplicit });
+        const sized = normalizeOne(source, frameExplicit, context);
         target.push(sized);
         postOrder.push(sized);
         const payload = sized.payload;
@@ -116,7 +119,7 @@ function normalize(elements: readonly WriteElement[], context: EncodeContext): S
             });
         }
     }
-    computeSizes(postOrder, context.explicitVr, context.nonConformant);
+    computeSizes(postOrder, rootExplicitVr, context.nonConformant);
     return out;
 }
 
@@ -143,8 +146,8 @@ function resolveDeclaredLength(source: WriteElement, nonConformant: boolean): nu
     return source.declaredLength;
 }
 
-function normalizeOne(source: WriteElement, context: EncodeContext): SizedElement {
-    const { explicitVr, charset, nonConformant } = context;
+function normalizeOne(source: WriteElement, explicitVr: boolean, context: EncodeContext): SizedElement {
+    const { charset, nonConformant } = context;
     const declaredLength = resolveDeclaredLength(source, nonConformant);
     let payload: SizedPayload;
     if (source.value.kind === 'sequence') {
@@ -174,7 +177,7 @@ function normalizeOne(source: WriteElement, context: EncodeContext): SizedElemen
         payload,
         contentSize: 0,
         totalSize: 0,
-        ...(declaredLength === undefined ? {} : { declaredLength }),
+        declaredLength,
     };
 }
 
@@ -357,7 +360,7 @@ function pushElementContent(tokens: EmitToken[], el: SizedElement, emitter: Emit
  */
 export function encodeDataSet(dataSet: WriteDataSet, options: EncodeOptions = {}): Uint8Array {
     const explicitVr = options.explicitVr ?? true;
-    const sized = normalize(dataSet.elements, { explicitVr, charset: options.charset ?? 'latin1', nonConformant: options.nonConformant === true });
+    const sized = normalize(dataSet.elements, explicitVr, { charset: options.charset ?? 'latin1', nonConformant: options.nonConformant === true });
     const total = sized.reduce((sum, el) => sum + el.totalSize, 0);
     const emitter = new Emitter(total);
     const tokens: EmitToken[] = [];
