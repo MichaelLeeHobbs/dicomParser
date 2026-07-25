@@ -19,6 +19,16 @@ from the `v2.0.0-rc.3` tag once the downstream soak passes.
 
 ### Added
 
+- Opt-in non-conformant write output for adversarial fixtures (#43):
+  `EncodeOptions.nonConformant` / `WriteFileOptions.nonConformant` relax the
+  checks that previously forced hand-assembled bytes — odd value and fragment
+  lengths emit verbatim, an over-long value encodes its truncated length field
+  instead of throwing, and the transfer-syntax/payload agreement check is
+  skipped — while `WriteElement.declaredLength` (honored only under the gate)
+  encodes a length field that disagrees with the bytes actually written. Byte
+  accounting stays exact; only the declared structure is corrupted. Off by
+  default. Big-endian output remains out of scope (the writer is
+  little-endian by design).
 - Nightly high-iteration fuzz job (#45): every fuzz property's iteration count
   now scales with `FUZZ_SCALE`, and `.github/workflows/fuzz.yml` runs the suite
   nightly at 50× (with a `workflow_dispatch` override), seeded with the whole

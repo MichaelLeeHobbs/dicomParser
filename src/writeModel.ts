@@ -38,6 +38,13 @@ export interface WriteElement {
     readonly value: WriteValue;
     /** Encode with undefined length + delimiters (sequences/fragments only). */
     readonly undefinedLength?: boolean;
+    /**
+     * Deliberately wrong length field to encode, instead of the real content
+     * size — for building non-conformant fixtures. Honored **only** under
+     * `EncodeOptions.nonConformant`; ignored otherwise (#43). The value bytes
+     * are still emitted in full, so this produces a declared/actual mismatch.
+     */
+    readonly declaredLength?: number;
 }
 
 /** One sequence item. */
