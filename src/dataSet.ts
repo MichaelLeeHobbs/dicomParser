@@ -207,7 +207,8 @@ export class DicomDataSet {
             return decodeUtf8(value);
         }
         if (this.charsetContext !== undefined) {
-            return decodeDicomText(value, this.charsetContext);
+            // the VR selects PN-specific ^/= designation resets (#56)
+            return decodeDicomText(value, this.charsetContext, element.vr);
         }
         let result = '';
         for (let i = 0; i < value.length; i++) {

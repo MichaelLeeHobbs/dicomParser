@@ -9,6 +9,14 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 Start of the 2.1 line (`2.1.0-alpha.0` on `master`). 2.0.0 final will be cut
 from the `v2.0.0-rc.3` tag once the downstream soak passes.
 
+### Fixed
+
+- ISO 2022 designation resets now apply at the PN component (`^`) and
+  component-group (`=`) delimiters for PN elements, matching DCMTK's
+  `checkDelimiters` (#56). Only affects non-conformant single-byte
+  code-extension values that cross a `^`/`=` boundary without their own reset
+  escape; multi-byte (kanji) sets keep suppressing delimiter checks as before.
+
 ### Added
 
 - `DicomDataSet.rawBytesCopy` (#40): the explicit detach operation — a fresh
