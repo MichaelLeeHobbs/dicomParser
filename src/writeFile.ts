@@ -51,6 +51,14 @@ export interface WriteFileOptions {
     readonly charset?: EncodeOptions['charset'];
     /** Meta-group knobs: implementation identity, (0002,0016), extra group-2 elements (#39). */
     readonly meta?: MetaGroupOptions;
+    /**
+     * Emit intentionally non-conformant output for adversarial fixtures (#43):
+     * relaxes the odd-length and length-field checks (see
+     * {@link EncodeOptions.nonConformant}) and the transfer-syntax/payload
+     * agreement check, so a fixture can pair encapsulated pixel data with a
+     * native syntax on purpose. Off by default.
+     */
+    readonly nonConformant?: boolean;
 }
 
 function findStringValue(dataSet: WriteDataSet, tag: TagLike): string | undefined {
@@ -170,9 +178,15 @@ function encodedDataSetFor(options: WriteFileOptions, transferSyntax: string): U
     if (transferSyntax === TS_EXPLICIT_BE || transferSyntax === TS_GE_PRIVATE_DLX) {
         throw new DicomError('unsupported', `transfer syntax ${transferSyntax} is read-only; the write path is little-endian`);
     }
-    checkTransferSyntaxPayload(options.dataSet, transferSyntax);
+    if (options.nonConformant !== true) {
+        checkTransferSyntaxPayload(options.dataSet, transferSyntax);
+    }
     const explicitVr = transferSyntax !== TS_IMPLICIT_LE;
-    const encoded = encodeDataSet(options.dataSet, { explicitVr, ...(options.charset === undefined ? {} : { charset: options.charset }) });
+    const encoded = encodeDataSet(options.dataSet, {
+        explicitVr,
+        ...(options.charset === undefined ? {} : { charset: options.charset }),
+        ...(options.nonConformant === undefined ? {} : { nonConformant: options.nonConformant }),
+    });
     if (transferSyntax !== TS_DEFLATED_LE) {
         return encoded;
     }

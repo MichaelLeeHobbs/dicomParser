@@ -30,12 +30,32 @@ export interface EncodeOptions {
     readonly explicitVr?: boolean;
     /** Charset for string values: 'latin1' (default) or 'utf8' (ISO_IR 192). */
     readonly charset?: WriteCharset;
+    /**
+     * Emit intentionally non-conformant output for adversarial fixtures (#43).
+     * Off by default; conformance checks are a feature, not an obstacle.
+     *
+     * When on: odd value/fragment lengths are emitted verbatim instead of
+     * rejected, a value larger than its length field encodes the truncated
+     * field rather than throwing, and {@link WriteElement.declaredLength} may
+     * override the encoded length field. Byte accounting stays exact — only
+     * the *declared* structure is corrupted, which is the point.
+     */
+    readonly nonConformant?: boolean;
+}
+
+/** Resolved encoding settings threaded through normalization. */
+interface EncodeContext {
+    readonly explicitVr: boolean;
+    readonly charset: WriteCharset;
+    readonly nonConformant: boolean;
 }
 
 interface SizedElement {
     readonly tag: Tag;
     readonly vr: string | undefined;
     readonly undefinedLength: boolean;
+    /** Non-conformant override for the encoded length field (#43). */
+    readonly declaredLength?: number;
     readonly payload: SizedPayload;
     /** Value-field length (excluding header and trailing delimiter). */
     contentSize: number;
@@ -72,16 +92,16 @@ function encodePayloadBytes(el: WriteElement, charset: WriteCharset): Uint8Array
 }
 
 /** Builds the sized tree iteratively (explicit stack, no recursion). */
-function normalize(elements: readonly WriteElement[], explicitVr: boolean, charset: WriteCharset): SizedElement[] {
+function normalize(elements: readonly WriteElement[], context: EncodeContext): SizedElement[] {
     const out: SizedElement[] = [];
     const postOrder: (SizedElement | SizedItem)[] = [];
     const work: { readonly source: WriteElement; readonly target: SizedElement[]; readonly explicitVr: boolean }[] = [];
     for (let i = elements.length - 1; i >= 0; i--) {
-        work.push({ source: elements[i] as WriteElement, target: out, explicitVr });
+        work.push({ source: elements[i] as WriteElement, target: out, explicitVr: context.explicitVr });
     }
     while (work.length > 0) {
         const { source, target, explicitVr: frameExplicit } = work.pop() as (typeof work)[number];
-        const sized = normalizeOne(source, frameExplicit, charset);
+        const sized = normalizeOne(source, { ...context, explicitVr: frameExplicit });
         target.push(sized);
         postOrder.push(sized);
         const payload = sized.payload;
@@ -96,11 +116,36 @@ function normalize(elements: readonly WriteElement[], explicitVr: boolean, chars
             });
         }
     }
-    computeSizes(postOrder, explicitVr);
+    computeSizes(postOrder, context.explicitVr, context.nonConformant);
     return out;
 }
 
-function normalizeOne(source: WriteElement, explicitVr: boolean, charset: WriteCharset): SizedElement {
+/** DICOM values must have even length; non-conformant fixtures may opt out (#43). */
+function checkEvenFragments(fragments: readonly Uint8Array[], nonConformant: boolean): void {
+    if (nonConformant) {
+        return;
+    }
+    for (const fragment of fragments) {
+        if (fragment.length % 2 !== 0) {
+            throw new DicomError('invalid-argument', `fragment length ${fragment.length} is odd; DICOM values must have even length`);
+        }
+    }
+}
+
+/** Validates a {@link WriteElement.declaredLength} override (a caller bug even under the gate). */
+function resolveDeclaredLength(source: WriteElement, nonConformant: boolean): number | undefined {
+    if (source.declaredLength === undefined || !nonConformant) {
+        return undefined;
+    }
+    if (!Number.isInteger(source.declaredLength) || source.declaredLength < 0 || source.declaredLength > 0xffffffff) {
+        throw new DicomError('invalid-argument', `element ${tagToString(source.tag)} declaredLength ${source.declaredLength} is not a 32-bit unsigned integer`);
+    }
+    return source.declaredLength;
+}
+
+function normalizeOne(source: WriteElement, context: EncodeContext): SizedElement {
+    const { explicitVr, charset, nonConformant } = context;
+    const declaredLength = resolveDeclaredLength(source, nonConformant);
     let payload: SizedPayload;
     if (source.value.kind === 'sequence') {
         const contentExplicitVr = explicitVr && source.vr !== 'UN';
@@ -110,15 +155,11 @@ function normalizeOne(source: WriteElement, explicitVr: boolean, charset: WriteC
             contentExplicitVr,
         };
     } else if (source.value.kind === 'fragments') {
-        for (const fragment of source.value.fragments) {
-            if (fragment.length % 2 !== 0) {
-                throw new DicomError('invalid-argument', `fragment length ${fragment.length} is odd; DICOM values must have even length`);
-            }
-        }
+        checkEvenFragments(source.value.fragments, nonConformant);
         payload = { kind: 'fragments', basicOffsetTable: source.value.basicOffsetTable, fragments: source.value.fragments };
     } else {
         const bytes = encodePayloadBytes(source, charset);
-        if (bytes.length % 2 !== 0) {
+        if (bytes.length % 2 !== 0 && !nonConformant) {
             throw new DicomError('invalid-argument', `element ${tagToString(source.tag)} value length ${bytes.length} is odd; values must have even length`);
         }
         payload = { kind: 'bytes', bytes };
@@ -126,7 +167,15 @@ function normalizeOne(source: WriteElement, explicitVr: boolean, charset: WriteC
     if (explicitVr) {
         checkExplicitVr(source);
     }
-    return { tag: source.tag, vr: source.vr, undefinedLength: source.undefinedLength ?? false, payload, contentSize: 0, totalSize: 0 };
+    return {
+        tag: source.tag,
+        vr: source.vr,
+        undefinedLength: source.undefinedLength ?? false,
+        payload,
+        contentSize: 0,
+        totalSize: 0,
+        ...(declaredLength === undefined ? {} : { declaredLength }),
+    };
 }
 
 /** Validates that an element carries a well-formed 2-character VR for explicit output. */
@@ -153,9 +202,9 @@ const MAX_LONG_LENGTH = 0xfffffffe;
  * (mod 65536) — the internal size accounting still balances, so the assert
  * cannot catch it.
  */
-function checkLengthField(el: SizedElement, explicitVr: boolean): void {
-    if (el.undefinedLength) {
-        return;
+function checkLengthField(el: SizedElement, explicitVr: boolean, nonConformant: boolean): void {
+    if (el.undefinedLength || nonConformant) {
+        return; // non-conformant output encodes the truncated field on purpose
     }
     const isLong = !explicitVr || explicitLengthBytes(el.vr as string) === 4;
     const max = isLong ? MAX_LONG_LENGTH : MAX_SHORT_LENGTH;
@@ -176,7 +225,7 @@ function headerSize(el: SizedElement, explicitVr: boolean): number {
 }
 
 /** Fills contentSize/totalSize bottom-up (postOrder holds parents before children). */
-function computeSizes(postOrder: readonly (SizedElement | SizedItem)[], rootExplicitVr: boolean): void {
+function computeSizes(postOrder: readonly (SizedElement | SizedItem)[], rootExplicitVr: boolean, nonConformant: boolean): void {
     const explicitOf = new Map<SizedElement, boolean>();
     for (const node of postOrder) {
         if ('payload' in node && node.payload.kind === 'sequence') {
@@ -190,7 +239,7 @@ function computeSizes(postOrder: readonly (SizedElement | SizedItem)[], rootExpl
     for (let i = postOrder.length - 1; i >= 0; i--) {
         const node = postOrder[i] as SizedElement | SizedItem;
         if ('payload' in node) {
-            sizeElement(node, explicitOf.get(node) ?? rootExplicitVr);
+            sizeElement(node, explicitOf.get(node) ?? rootExplicitVr, nonConformant);
         } else {
             node.contentSize = node.elements.reduce((sum, el) => sum + el.totalSize, 0);
             node.totalSize = 8 + node.contentSize + (node.undefinedLength ? 8 : 0);
@@ -198,7 +247,7 @@ function computeSizes(postOrder: readonly (SizedElement | SizedItem)[], rootExpl
     }
 }
 
-function sizeElement(el: SizedElement, explicitVr: boolean): void {
+function sizeElement(el: SizedElement, explicitVr: boolean, nonConformant: boolean): void {
     if (el.payload.kind === 'bytes') {
         el.contentSize = el.payload.bytes.length;
     } else if (el.payload.kind === 'sequence') {
@@ -207,7 +256,7 @@ function sizeElement(el: SizedElement, explicitVr: boolean): void {
         const fragmentsSize = el.payload.fragments.reduce((sum, f) => sum + 8 + f.length, 0);
         el.contentSize = 8 + el.payload.basicOffsetTable.length * 4 + fragmentsSize;
     }
-    checkLengthField(el, explicitVr);
+    checkLengthField(el, explicitVr, nonConformant);
     el.totalSize = headerSize(el, explicitVr) + el.contentSize + (el.undefinedLength ? 8 : 0);
 }
 
@@ -255,7 +304,9 @@ type EmitToken =
 
 function emitHeader(emitter: Emitter, el: SizedElement, explicitVr: boolean): void {
     emitter.tag(el.tag);
-    const length = el.undefinedLength ? UNDEFINED_LENGTH : el.contentSize;
+    // declaredLength (non-conformant only) corrupts the declared structure while
+    // the real bytes are still emitted — the whole point of the escape hatch
+    const length = el.undefinedLength ? UNDEFINED_LENGTH : (el.declaredLength ?? el.contentSize);
     if (!explicitVr) {
         emitter.uint32(length);
         return;
@@ -306,7 +357,7 @@ function pushElementContent(tokens: EmitToken[], el: SizedElement, emitter: Emit
  */
 export function encodeDataSet(dataSet: WriteDataSet, options: EncodeOptions = {}): Uint8Array {
     const explicitVr = options.explicitVr ?? true;
-    const sized = normalize(dataSet.elements, explicitVr, options.charset ?? 'latin1');
+    const sized = normalize(dataSet.elements, { explicitVr, charset: options.charset ?? 'latin1', nonConformant: options.nonConformant === true });
     const total = sized.reduce((sum, el) => sum + el.totalSize, 0);
     const emitter = new Emitter(total);
     const tokens: EmitToken[] = [];

@@ -272,6 +272,88 @@ describe('writeFile', () => {
     });
 });
 
+describe('nonConformant fixtures (#43)', () => {
+    it('is off by default: every conformance check still fires', () => {
+        expect(() => encodeDataSet(dataSet([element('00081030', 'LO', latin1('odd'))]))).toThrow(/odd/);
+        expect(() => encodeDataSet(dataSet([element('00281201', 'US', new Array(40000).fill(1))]))).toThrow(/16-bit length field/);
+        // declaredLength is ignored without the gate
+        const clean = encodeDataSet(dataSet([{ ...element('00081030', 'LO', latin1('ABCD')), declaredLength: 999 }]));
+        expect(new DataView(clean.buffer, clean.byteOffset).getUint16(6, true)).toBe(4);
+    });
+
+    it('emits an odd-length value that the parser then reports as odd-length', () => {
+        const bytes = encodeDataSet(dataSet([element('00081030', 'LO', latin1('odd'))]), { nonConformant: true });
+        expect(bytes.length).toBe(8 + 3);
+        const result = parse(bytes, { transferSyntax: TS_EXPLICIT_LE });
+        expect(result.warnings.map(w => w.code)).toContain('odd-length');
+        expect(result.dataSet.string('x00081030')).toBe('odd');
+    });
+
+    it('emits a declared length that disagrees with the bytes actually written', () => {
+        const bytes = encodeDataSet(dataSet([{ ...element('00081030', 'LO', latin1('ABCD')), declaredLength: 0x1000 }, element('00280010', 'US', [512])]), {
+            nonConformant: true,
+        });
+        // the header declares 0x1000 while only 4 value bytes follow
+        expect(new DataView(bytes.buffer, bytes.byteOffset).getUint16(6, true)).toBe(0x1000);
+        expect(bytes.length).toBe(8 + 4 + 8 + 2);
+        const result = parse(bytes, { transferSyntax: TS_EXPLICIT_LE });
+        expect(result.warnings.map(w => w.code)).toContain('unexpected-eof');
+    });
+
+    it('encodes a truncated length field instead of refusing an over-long value', () => {
+        const big = new Array(40000).fill(1); // 80000 bytes under a short-form VR
+        const bytes = encodeDataSet(dataSet([element('00281201', 'US', big)]), { nonConformant: true });
+        expect(bytes.length).toBe(8 + 80000);
+        expect(new DataView(bytes.buffer, bytes.byteOffset).getUint16(6, true)).toBe(80000 & 0xffff);
+    });
+
+    it('emits odd-length fragments', () => {
+        const bytes = encodeDataSet(
+            dataSet([
+                {
+                    ...element('7FE00010', 'OB', { kind: 'fragments', basicOffsetTable: [], fragments: [Uint8Array.from([1, 2, 3])] }),
+                    undefinedLength: true,
+                },
+            ]),
+            { nonConformant: true }
+        );
+        expect(bytes).toContain(3);
+        expect(() =>
+            encodeDataSet(
+                dataSet([
+                    {
+                        ...element('7FE00010', 'OB', { kind: 'fragments', basicOffsetTable: [], fragments: [Uint8Array.from([1, 2, 3])] }),
+                        undefinedLength: true,
+                    },
+                ])
+            )
+        ).toThrow(/odd/);
+    });
+
+    it('rejects a declaredLength that is not a 32-bit unsigned integer', () => {
+        expect(() => encodeDataSet(dataSet([{ ...element('00081030', 'LO', latin1('ABCD')), declaredLength: -1 }]), { nonConformant: true })).toThrow(
+            /32-bit unsigned integer/
+        );
+        expect(() => encodeDataSet(dataSet([{ ...element('00081030', 'LO', latin1('ABCD')), declaredLength: 1.5 }]), { nonConformant: true })).toThrow(
+            /32-bit unsigned integer/
+        );
+    });
+
+    it('writeFile pairs encapsulated pixel data with a native syntax on purpose', () => {
+        const encapsulated = dataSet([
+            {
+                ...element('7FE00010', 'OB', { kind: 'fragments', basicOffsetTable: [0], fragments: [Uint8Array.from([1, 2, 3, 4])] }),
+                undefinedLength: true,
+            },
+        ]);
+        expect(() => writeFile({ dataSet: encapsulated, transferSyntax: TS_EXPLICIT_LE })).toThrow(/encapsulated/);
+        const file = writeFile({ dataSet: encapsulated, transferSyntax: TS_EXPLICIT_LE, nonConformant: true });
+        const result = parse(file);
+        expect(result.transferSyntax).toBe(TS_EXPLICIT_LE);
+        expect(result.dataSet.element('x7fe00010')).toBeDefined();
+    });
+});
+
 describe('modifyDataSet (parse → modify → serialize)', () => {
     it('replaces, adds and removes elements', () => {
         const original = writeFile({
