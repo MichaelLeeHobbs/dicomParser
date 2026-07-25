@@ -38,6 +38,7 @@ export { scanEncapsulatedPixelData } from './encapsulated';
 export { readElements, type ReadElementsOptions, type ReadElementsResult, type StopAtOption } from './tokenizer';
 export { readPart10Header, readUiString, type Part10Header, type Part10Options } from './part10';
 export { parseHeadAsync, type BulkRange, type HeadOptions, type HeadResult, type RangeReader } from './headRead';
+export { PushParser, type PushOptions, type PushOutcome, type PushStatus } from './pushParser';
 export { inflateRaw, inflateRawAsync, hasSyncInflate, type InflateFn } from './inflate';
 export {
     parse,
