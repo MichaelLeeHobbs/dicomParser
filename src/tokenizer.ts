@@ -209,6 +209,14 @@ class Tokenizer {
         if (cause.code === 'limit-exceeded' || cause.code === 'depth-exceeded' || cause.code === 'truncated') {
             return false;
         }
+        // Under strict EOF, any error carrying totalNeeded is truncation
+        // evidence regardless of its code (buffer-overread from a truncated
+        // header, an annotated malformed overrun) — equally terminal, or the
+        // fallback would swallow it and misreport a prefix as complete. In
+        // tolerant mode these stay recoverable (unchanged parse behavior).
+        if (this.stream.strictEof && cause.totalNeeded !== undefined) {
+            return false;
+        }
         let fallbackIndex = -1;
         for (let i = this.stack.length - 1; i >= 0; i--) {
             const frame = this.stack[i] as Frame;

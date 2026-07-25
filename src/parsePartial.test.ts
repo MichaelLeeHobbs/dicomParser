@@ -178,6 +178,19 @@ describe('parsePartial — the truncation/corruption split (#34)', () => {
         expect(truncation.totalNeeded).toBeGreaterThan(file.length);
     });
 
+    it('does not let a speculative sequence fallback swallow a truncated header at end of input (review)', () => {
+        // Same swallow shape, but the child dies on a header overread
+        // (buffer-overread + totalNeeded) instead of a truncated value — the
+        // fallback must treat that as terminal under strict EOF too.
+        const partialChildHeader = concat([tagBytes('00081150'), latin1('UI')]); // 6 of ≥8 header bytes
+        const itemBytes = concat([tagBytes('FFFEE000'), Uint8Array.from([partialChildHeader.length & 0xff, 0x00, 0x00, 0x00]), partialChildHeader]);
+        const sq = concat([tagBytes('00081110'), latin1('SQ'), new Uint8Array(2), Uint8Array.from([itemBytes.length & 0xff, 0x00, 0x00, 0x00]), itemBytes]);
+        const file = p10(TS.explicitLE, [sq]);
+        expect(parse(file).ok).toBe(true); // tolerant: fallback keeps it opaque
+        const truncation = needMore(parsePartial(file));
+        expect(truncation.totalNeeded).toBeGreaterThan(file.length);
+    });
+
     it('classifies resource-bound failures as malformed', () => {
         const outcome = parsePartial(COMPLEX_FILE, { maxElements: 2 });
         expect(outcome.outcome).toBe('malformed');
