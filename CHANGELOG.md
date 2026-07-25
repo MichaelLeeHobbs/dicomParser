@@ -19,6 +19,14 @@ from the `v2.0.0-rc.3` tag once the downstream soak passes.
 
 ### Added
 
+- Nested and predicate edits in `modifyDataSet` (#42): `DataSetEdits.removeWhere`
+  removes every element at any depth whose tag satisfies a predicate (so private
+  groups and the `50xx`/`60xx` ranges are expressed by the caller's own rule,
+  with no range type to learn), and `DataSetEdits.mapElements` transforms every
+  element at any depth — return a replacement, or `undefined` to remove it.
+  Both walk sequence items depth-first. `set`/`remove` keep their root-level
+  exact-tag semantics and run first; unmatched `set` elements are appended and
+  deliberately bypass the hooks.
 - Opt-in non-conformant write output for adversarial fixtures (#43):
   `EncodeOptions.nonConformant` / `WriteFileOptions.nonConformant` relax the
   checks that previously forced hand-assembled bytes — odd value and fragment
