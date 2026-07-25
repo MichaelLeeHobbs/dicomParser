@@ -19,6 +19,13 @@ from the `v2.0.0-rc.3` tag once the downstream soak passes.
 
 ### Added
 
+- Nightly high-iteration fuzz job (#45): every fuzz property's iteration count
+  now scales with `FUZZ_SCALE`, and `.github/workflows/fuzz.yml` runs the suite
+  nightly at 50× (with a `workflow_dispatch` override), seeded with the whole
+  fixture corpus. A checked-in crash-regression corpus (`tests/fuzz-corpus/`) is
+  replayed — every seed, and every truncation of every seed — on every run, and
+  new counterexamples are uploaded as bytes to commit rather than seed numbers
+  to re-derive.
 - `readFrameIndexAsync` (#38): resolves the PixelData extent and per-frame
   file-absolute `(offset, length)` ranges over a `RangeReader`, reading only the
   header, the offset tables and (as a last resort) fragment item headers — never

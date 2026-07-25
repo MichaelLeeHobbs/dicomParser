@@ -53,6 +53,7 @@
         "test": "vitest run",
         "test:watch": "vitest",
         "test:coverage": "vitest run --coverage",
+        "test:fuzz": "vitest run tests/fuzz.test.ts --testTimeout 1800000",
         "test:browser": "vitest run --config vitest.browser.config.ts",
         "lint": "eslint --max-warnings 0 .",
         "lint:fix": "eslint --fix --max-warnings 0 .",
