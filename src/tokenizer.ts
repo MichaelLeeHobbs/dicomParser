@@ -147,6 +147,17 @@ type Frame = DataSetFrame | SequenceFrame;
 const DEFAULT_MAX_DEPTH = 128;
 const DEFAULT_MAX_ELEMENTS = 1_000_000;
 
+/** Normalizes the stop-condition union into the tokenizer's internal fields. */
+function resolveStopOption(stopAt: StopAtOption | undefined): { tag: Tag | undefined; inclusive: boolean; set: Set<Tag> | undefined } {
+    if (stopAt !== undefined && 'tags' in stopAt) {
+        if (stopAt.tags.length === 0) {
+            throw new DicomError('invalid-argument', 'stopAt.tags must not be empty');
+        }
+        return { tag: undefined, inclusive: false, set: new Set(stopAt.tags.map(toTag)) };
+    }
+    return { tag: stopAt === undefined ? undefined : toTag(stopAt.tag), inclusive: stopAt?.inclusive ?? false, set: undefined };
+}
+
 class Tokenizer {
     private readonly stream: ByteStream;
     private readonly vrLookup: VrLookup | undefined;
@@ -167,19 +178,10 @@ class Tokenizer {
     constructor(stream: ByteStream, options: ReadElementsOptions) {
         this.stream = stream;
         this.vrLookup = options.vrLookup;
-        const stopAt = options.stopAt;
-        if (stopAt !== undefined && 'tags' in stopAt) {
-            if (stopAt.tags.length === 0) {
-                throw new DicomError('invalid-argument', 'stopAt.tags must not be empty');
-            }
-            this.stopTag = undefined;
-            this.stopInclusive = false;
-            this.stopSet = new Set(stopAt.tags.map(toTag));
-        } else {
-            this.stopTag = stopAt === undefined ? undefined : toTag(stopAt.tag);
-            this.stopInclusive = stopAt?.inclusive ?? false;
-            this.stopSet = undefined;
-        }
+        const stop = resolveStopOption(options.stopAt);
+        this.stopTag = stop.tag;
+        this.stopInclusive = stop.inclusive;
+        this.stopSet = stop.set;
         this.maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH;
         this.maxElements = options.maxElements ?? DEFAULT_MAX_ELEMENTS;
         this.compressedTransferSyntax = options.compressedTransferSyntax ?? false;
