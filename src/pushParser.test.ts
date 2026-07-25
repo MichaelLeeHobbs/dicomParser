@@ -10,6 +10,7 @@ import {
     explicitEl,
     implicitEl,
     latin1,
+    metaGroup,
     p10,
     p10Deflated,
     sqExplicit,
@@ -172,6 +173,33 @@ describe('PushParser — incremental signals', () => {
         const result = parser.end();
         expectResultsEqual(result, parse(COMPLEX_FILE, options));
         expect(emitted).toEqual([...parse(COMPLEX_FILE, options).dataSet.elements.keys()]);
+    });
+
+    it('does not claim beforePixelData on a boundary-complete prefix (review)', () => {
+        const boundary = 132 + metaGroup(TS.explicitLE).length + explicitEl('00080018', 'UI', evenPad('1.2.840.10008.5.1.4.1.1.7.99', '\0')).length;
+        const parser = new PushParser();
+        const status = parser.push(COMPLEX_FILE.subarray(0, boundary));
+        expect(status.outcome.kind).toBe('complete');
+        expect(status.beforePixelData).toBe(false); // PixelData may still arrive
+        parser.end();
+        expect(parser.status.beforePixelData).toBe(true); // definitively finished
+    });
+
+    it('maxElements: 0 trips immediately, exactly like parse (review)', () => {
+        const parser = new PushParser({ maxElements: 0 });
+        feed(parser, COMPLEX_FILE, () => 64);
+        expect(parser.status.outcome.kind).toBe('malformed');
+        expectResultsEqual(parser.end(), parse(COMPLEX_FILE, { maxElements: 0 }));
+    });
+
+    it('signals never observe past a caller stopAt (review)', () => {
+        // x00300000 is absent; proving that needs a header above it, but the
+        // caller stops at x00280010 — parse would never read beyond, so the
+        // probe must not either
+        const parser = new PushParser({ stopAt: { tag: 0x00280010 }, wanted: ['x00300000'] });
+        feed(parser, COMPLEX_FILE, () => 16);
+        expect(parser.status.wantedResolved).toBe(false);
+        expect(parser.status.beforePixelData).toBe(false);
     });
 
     it('honors inclusive stopAt: only the trigger settles, exactly like parse', () => {

@@ -77,9 +77,11 @@ export interface PushStatus {
     /** All {@link PushOptions.wanted} tags answered or provably absent. */
     readonly wantedResolved: boolean;
     /**
-     * Every element before (7FE0,0010) PixelData has settled — a root element
-     * with tag ≥ (7FE0,0010) has been seen, or the input is complete without
-     * one. Advisory: assumes stream-ordered tags (PS3.5).
+     * Every element before (7FE0,0010) PixelData is available — a root header
+     * with tag ≥ (7FE0,0010) has been seen, or the stream was definitively
+     * finished with {@link PushParser.end}. A prefix that merely ends on an
+     * element boundary does not fire this: PixelData may still arrive.
+     * Advisory: assumes stream-ordered tags (PS3.5).
      */
     readonly beforePixelData: boolean;
 }
@@ -127,7 +129,7 @@ export class PushParser {
             bytesBuffered: this.written,
             elementCount: this.settled.size,
             wantedResolved: this.wantedTags.every(tag => this.settled.has(tag) || this.maxSeenRootTag > tag),
-            beforePixelData: this.maxSeenRootTag >= TAG_PIXEL_DATA || this.lastOutcome.kind === 'complete',
+            beforePixelData: this.maxSeenRootTag >= TAG_PIXEL_DATA || this.ended !== undefined,
         };
     }
 
@@ -265,7 +267,7 @@ export class PushParser {
             ...(this.options.vrLookup === undefined ? {} : { vrLookup: this.options.vrLookup }),
             ...(this.options.stopAt === undefined ? {} : { stopAt: this.options.stopAt }),
             ...(this.options.maxDepth === undefined ? {} : { maxDepth: this.options.maxDepth }),
-            ...(this.options.maxElements === undefined ? {} : { maxElements: Math.max(1, this.options.maxElements - this.settled.size) }),
+            ...(this.options.maxElements === undefined ? {} : { maxElements: Math.max(0, this.options.maxElements - this.settled.size) }),
         });
         const elements = [...result.elements.values()];
         const error = result.error;
@@ -320,11 +322,15 @@ export class PushParser {
         if (targets.length === 0) {
             return;
         }
+        // never observe past a caller-configured stop: parse() would not read
+        // those headers, and the signals must not claim proofs parse cannot see
+        const userStop = this.options.stopAt === undefined ? undefined : toTag(this.options.stopAt.tag);
+        const probeTag = userStop === undefined ? Math.max(...targets) : Math.min(Math.max(...targets), userStop);
         const stream = new ByteStream(this.bytes(), { position: this.watermark, littleEndian: plan.littleEndian, strictEof: true });
         const result = readElements(stream, {
             explicitVr: plan.explicitVr,
             compressedTransferSyntax: plan.compressed,
-            stopAt: { tag: Math.max(...targets) },
+            stopAt: { tag: probeTag },
             ...(this.options.vrLookup === undefined ? {} : { vrLookup: this.options.vrLookup }),
             ...(this.options.maxDepth === undefined ? {} : { maxDepth: this.options.maxDepth }),
         });
