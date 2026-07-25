@@ -28,6 +28,16 @@
                 "default": "./dist/compat.cjs"
             }
         },
+        "./dictionary": {
+            "import": {
+                "types": "./dist/dictionary.d.ts",
+                "default": "./dist/dictionary.js"
+            },
+            "require": {
+                "types": "./dist/dictionary.d.cts",
+                "default": "./dist/dictionary.cjs"
+            }
+        },
         "./package.json": "./package.json"
     },
     "files": [
