@@ -6,6 +6,11 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ## [Unreleased]
 
+## [2.0.0-rc.2] — 2026-07-24
+
+Post-rc.1 field-review follow-up: the bounded head-read API that unblocks the
+`@ubercode/dcmtk` (dcmtk.js) swap, plus the `/compat` surface it needs.
+
 ### Added
 
 - **Bounded / streaming head-read** (`parseHeadAsync`): parses a Part-10 file's
@@ -21,6 +26,10 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
   file, or `vrLookup`'s answer for implicit) and an `encapsulated` flag, so a
   consumer can reconstruct a skipped element's JSON (`{ vr }`, DCMTK-normalizing
   encapsulated PixelData to `OB`) without re-reading the header bytes (#64).
+- `readPart10Header` (and `Part10Header`) are now exported from `/compat` and the
+  `dicomParser` namespace. Note it returns the **core `Part10Header`**
+  (`dataSetPosition`/`transferSyntax`/`meta`), not v1's meta `DataSet` — a
+  deliberate shape divergence documented in `docs/migration-v1.md` (#58).
 
 ## [2.0.0-rc.1] — 2026-07-24
 
