@@ -125,6 +125,20 @@ lookupKeyword('TransferSyntaxUID')?.tag; // 0x00020010
 parse(bytes, { vrLookup: dictionaryVrLookup }); // implicit VRs + CP-246 UN-as-SQ
 ```
 
+### DICOM-JSON (PS3.18 Annex F)
+
+```ts
+import { parse, toDicomJson } from '@ubercode/dicom-parser';
+import { dictionaryVrLookup } from '@ubercode/dicom-parser/dictionary';
+
+const result = parse(bytes, { vrLookup: dictionaryVrLookup });
+const json = toDicomJson(result.dataSet, {
+    vrLookup: dictionaryVrLookup,
+    bulkDataUri: el => (el.tag === 0x7fe00010 ? 'https://pacs.example.com/bulk/pixeldata' : undefined),
+});
+// spec-complete /metadata payload: JSON.stringify(json)
+```
+
 ### Streaming ingest (push parser)
 
 `PushParser` accepts chunks as they arrive: root elements settle (and emit)
