@@ -6,6 +6,27 @@ preserved in [legacy-CHANGELOG.md](./legacy-CHANGELOG.md).
 
 ## [Unreleased]
 
+Start of the 2.1 line (`2.1.0-alpha.0` on `master`). 2.0.0 final will be cut
+from the `v2.0.0-rc.3` tag once the downstream soak passes.
+
+### Added
+
+- `parsePartial` / `parsePartialAsync`: classify a byte prefix as `complete`,
+  `needMoreBytes`, or `malformed` — distinguishing truncation from corruption on
+  partial buffers (#34). The `needMoreBytes` arm carries `{ offset, totalNeeded }`
+  where `totalNeeded` is the smallest total input length that could let parsing
+  advance (sized from declared lengths; derived from untrusted input — cap it),
+  so an ingest loop's follow-up read is sized, not guessed, and re-calling with
+  `totalNeeded` bytes always makes progress. This also resolves the truncation
+  asymmetry where a truncated defined-length value looked `ok` with only a
+  warning while a truncated header failed: under `parsePartial` both are
+  `needMoreBytes`. Interior anomalies (bounded by declared lengths inside the
+  input) are tolerated exactly as `parse` tolerates them; the tolerant `parse`
+  behavior is unchanged. Truncation of a deflated payload itself is not
+  distinguishable and reports `malformed`.
+- `ByteStream` gained a `strictEof` option and `DicomError` a `totalNeeded`
+  field (truncation evidence) plus a `truncated` code, supporting the above.
+
 ## [2.0.0-rc.3] — 2026-07-24
 
 A correctness fix for `parseHeadAsync` on malformed encapsulated PixelData, found
