@@ -69,6 +69,10 @@ Browser with deflated files (no zlib): `await parseAsync(bytes)` uses
 // The core default is exclusive, so the triggering element is not parsed;
 // pass `inclusive: true` to include it. (The /compat façade pins `true`.)
 const result = parse(bytes, { stopAt: { tag: 'x7fe00010' } });
+
+// resolved-tag set: stop once these tags are answered or provably absent —
+// bounded even for SR/PDF/RTSTRUCT, which have no tag near (7FE0,0010).
+const header = parse(bytes, { stopAt: { tags: ['x00080018', 'x00100020'] } });
 ```
 
 ### Bounded head-read (metadata without the bulk bytes)
