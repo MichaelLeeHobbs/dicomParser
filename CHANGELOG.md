@@ -11,6 +11,18 @@ from the `v2.0.0-rc.3` tag once the downstream soak passes.
 
 ### Added
 
+- `PushParser`: a push/streaming parser for receive paths (#33). Feed chunks
+  with `push(chunk)` and read incremental signals — root elements settle and
+  emit exactly once (`onElement`), a `wanted` tag set resolves when each tag is
+  settled or provably absent (stream ordering), and `beforePixelData` fires as
+  soon as the PixelData header is readable, long before its value arrives.
+  Scheduling uses the `needMoreBytes`/`totalNeeded` outcome from `parsePartial`.
+  `end()`/`endAsync()` return the authoritative tolerant `parse` of the
+  assembled buffer — identical to a whole-buffer parse regardless of chunking
+  (property-tested, including corrupted-input chunk-invariance). Deflated
+  input buffers and resolves at `end()` only: mid-stream offsets for a
+  deflated dataset are in inflated coordinates and cannot guide transport
+  reads (incremental-inflate signals are follow-up work).
 - `parsePartial` / `parsePartialAsync`: classify a byte prefix as `complete`,
   `needMoreBytes`, or `malformed` — distinguishing truncation from corruption on
   partial buffers (#34). The `needMoreBytes` arm carries `{ offset, totalNeeded }`

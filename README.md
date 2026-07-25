@@ -106,6 +106,26 @@ if (outcome.outcome === 'needMoreBytes') {
 } // 'complete' → outcome.result is a normal ParseResult; 'malformed' → result.error
 ```
 
+### Streaming ingest (push parser)
+
+`PushParser` accepts chunks as they arrive: root elements settle (and emit)
+incrementally, a `wanted` tag set resolves as soon as each tag is answered or
+provably absent, and `beforePixelData` fires the moment the PixelData header is
+readable — so receive paths can validate and route on header facts while the
+bulk is still in flight.
+
+```ts
+import { PushParser } from '@ubercode/dicom-parser';
+
+const parser = new PushParser({ wanted: ['x00080018', 'x0020000d'] });
+for await (const chunk of stream) {
+    const status = parser.push(chunk);
+    if (status.wantedResolved) routeEarly(parser.dataSet());
+    if (status.outcome.kind === 'malformed') break; // more bytes cannot help
+}
+const result = parser.end(); // identical to parse() of the whole buffer
+```
+
 ### Lenient-mode options
 
 | Option                          | Purpose                                                                                          |
