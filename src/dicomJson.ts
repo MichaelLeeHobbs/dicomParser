@@ -22,7 +22,7 @@
  */
 
 import type { DicomDataSet } from './dataSet';
-import type { DicomElement } from './element';
+import type { DicomElement, SequenceElement } from './element';
 import type { VrLookup } from './elementHeader';
 import type { Tag } from './tag';
 
@@ -62,7 +62,6 @@ export interface DicomJsonOptions {
     readonly bulkDataUri?: (element: DicomElement) => string | undefined;
 }
 
-const MULTI_STRING = new Set(['AE', 'AS', 'CS', 'DA', 'DT', 'LO', 'SH', 'TM', 'UC', 'UI']);
 const SINGLE_TEXT = new Set(['LT', 'ST', 'UT', 'UR']);
 const BINARY = new Set(['OB', 'OD', 'OF', 'OL', 'OV', 'OW', 'UN']);
 
@@ -178,13 +177,6 @@ function attributeTagValues(source: DicomDataSet, element: DicomElement): unknow
 
 /** Per-VR value list for a non-empty, non-sequence, non-binary element. */
 function elementValues(vr: string, source: DicomDataSet, element: DicomElement): unknown[] {
-    const tag = element.tag;
-    if (vr === 'PN') {
-        return (source.strings(tag) ?? []).map(personNameValue);
-    }
-    if (vr === 'IS' || vr === 'DS') {
-        return (source.strings(tag) ?? []).map(numberStringValue);
-    }
     if (vr === 'AT') {
         return attributeTagValues(source, element);
     }
@@ -195,11 +187,22 @@ function elementValues(vr: string, source: DicomDataSet, element: DicomElement):
     if (numeric !== undefined) {
         return numericValues(numeric, source, element);
     }
+    return stringValues(vr, source, element.tag);
+}
+
+/** Value list for the string-encoded VRs (PN/IS/DS/text/multi-valued). */
+function stringValues(vr: string, source: DicomDataSet, tag: Tag): unknown[] {
+    if (vr === 'PN') {
+        return (source.strings(tag) ?? []).map(personNameValue);
+    }
+    if (vr === 'IS' || vr === 'DS') {
+        return (source.strings(tag) ?? []).map(numberStringValue);
+    }
     if (SINGLE_TEXT.has(vr)) {
         const text = source.text(tag);
         return text === undefined || text === '' ? [] : [text];
     }
-    // MULTI_STRING VRs and any remaining string-like VR decode and split
+    // AE/AS/CS/DA/DT/LO/SH/TM/UC/UI and any remaining string-like VR: split
     return nullifyEmpty(source.strings(tag) ?? []);
 }
 
@@ -208,17 +211,21 @@ interface BuildJob {
     readonly target: DicomJsonModel;
 }
 
+function sequenceAttribute(element: SequenceElement, stack: BuildJob[]): DicomJsonAttribute {
+    const attribute: DicomJsonAttribute = { vr: 'SQ' };
+    if (element.items.length > 0) {
+        attribute.Value = element.items.map(item => {
+            const target: DicomJsonModel = {};
+            stack.push({ source: item.dataSet, target });
+            return target;
+        });
+    }
+    return attribute;
+}
+
 function buildAttribute(source: DicomDataSet, element: DicomElement, options: DicomJsonOptions, stack: BuildJob[]): DicomJsonAttribute {
     if (element.kind === 'sequence') {
-        const attribute: DicomJsonAttribute = { vr: 'SQ' };
-        if (element.items.length > 0) {
-            attribute.Value = element.items.map(item => {
-                const target: DicomJsonModel = {};
-                stack.push({ source: item.dataSet, target });
-                return target;
-            });
-        }
-        return attribute;
+        return sequenceAttribute(element, stack);
     }
     const vr = element.vr ?? options.vrLookup?.(element.tag) ?? 'UN';
     if (element.length === 0) {

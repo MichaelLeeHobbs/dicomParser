@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { toDicomJson } from './dicomJson';
 import { parse } from './parse';
-import { TS, concat, encapsulatedPixelData, evenPad, explicitEl, implicitEl, latin1, p10, sqExplicit, tagBytes, uint32Bytes } from '../tests/helpers/p10';
+import { TS, concat, encapsulatedPixelData, evenPad, explicitEl, implicitEl, latin1, p10, sqExplicit, tagBytes } from '../tests/helpers/p10';
 
 function uint16le(...values: number[]): Uint8Array {
     const bytes = new Uint8Array(values.length * 2);
@@ -15,7 +15,7 @@ describe('toDicomJson — per-VR value semantics (PS3.18 Annex F)', () => {
         explicitEl('00080018', 'UI', evenPad('1.2.3.4', '\0')),
         explicitEl('00080060', 'CS', evenPad('MR')),
         explicitEl('00081090', 'LO', evenPad('A\\\\B')), // empty middle value → null
-        explicitEl('00100010', 'PN', evenPad('Yamada^Tarou=山田^太郎=やまだ^たろう'.replace(/[^\x00-\xff]/g, 'x'))), // ascii stand-in, groups intact
+        explicitEl('00100010', 'PN', evenPad('Yamada^Tarou=Ideo^Graphic=Pho^Netic')),
         explicitEl('00101020', 'DS', evenPad('1.75')),
         explicitEl('00101021', 'DS', evenPad('1.5\\abc')), // unparsable stays a string
         explicitEl('00200011', 'IS', evenPad('7')),
